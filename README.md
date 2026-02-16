@@ -1,66 +1,67 @@
-# BricsAI - AI Integration for BricsCAD
+# BricsAI - Intelligent CAD Assistant
 
-## Overview
+BricsAI is an advanced AI-powered assistant for BricsCAD, capable of executing complex CAD operations through natural language commands. It leverages OpenAI's GPT-4o model to interpret user intent and controls BricsCAD via COM Automation.
 
-BricsAI integrates Large Language Models (LLM) with BricsCAD to automate CAD tasks using natural language commands. 
+## 🚀 Key Features
+
+- **Natural Language Control**: Type commands like "Draw a circle" or "Cleanup drawing" instead of memorizing LISP.
+- **Structured Tool Use**: Uses JSON-based communication for precise, error-free command execution.
+- **Multi-Step Automation**: Can perform sequences of actions (e.g., Select -> Filter -> Move) in a single request.
+- **Complex Logic Support**: Handles advanced scenarios like "Find the largest box and move it to Layer Frame" by generating custom LISP algorithms on the fly.
+- **Cross-Version Compatibility**: Automatically detects and adapts to:
+  - **BricsCAD V15** (Legacy commands like `-LAYER`)
+  - **BricsCAD V19+** (Modern panels like `LAYERSPANELOPEN`)
+
+## 🏗️ Architecture
 
 The solution consists of two main components:
-1. **BricsAI.Plugin**: A .NET plugin for BricsCAD that executes commands and manages selections.
-2. **BricsAI.Overlay**: A WPF overlay application that accepts user prompts, communicates with OpenAI, and sends the resulting LISP/commands to the plugin via Named Pipes.
 
-## Prerequisites
+1.  **BricsAI.Overlay (WPF Application)**:
+    - The main user interface (chat window).
+    - Connects to a running BricsCAD instance using **COM Interop** (late binding for compatibility).
+    - Handles communication with OpenAI API.
+    - Parses structured JSON responses and executes them in BricsCAD.
 
-- **BricsCAD Pro/Platinum** (Supported versions compatible with .NET Framework 4.6.1+)
-- **.NET SDK** (for building the solution)
-- **OpenAI API Key**
+2.  **BricsAI.Plugin (Legacy)**:
+    - *Deprecated approach using .NET Plugin/Named Pipes.*
+    - Retained for reference but `BricsAI.Overlay` is the active controller.
 
-## Project Structure
+## 🛠️ Setup & Usage
 
-- `BricsAI.Plugin/`: The BricsCAD .NET plugin project.
-- `BricsAI.Overlay/`: The WPF overlay application project.
-- `build.bat`: Script to build the entire solution.
+### Prerequisites
+- BricsCAD (V15 or newer recommended).
+- .NET 9.0 SDK.
+- OpenAI API Key.
 
-## Installation & Setup
-
-1.  **Clone the Repository**
-    ```bash
-    git clone <repository_url>
-    cd AIWithBricsCad/BricsAI
+### Configuration
+1.  Navigate to `BricsAI.Overlay/appsettings.json`.
+2.  Add your OpenAI API Key:
+    ```json
+    {
+      "OpenAI": {
+        "ApiKey": "sk-...",
+        "Model": "gpt-4o"
+      }
+    }
     ```
 
-2.  **Configure API Key**
-    - Navigate to `BricsAI.Overlay/`.
-    - Create or update `appsettings.json` with your OpenAI API key:
-      ```json
-      {
-        "OpenAI": {
-          "ApiKey": "YOUR_OPENAI_API_KEY",
-          "Model": "gpt-4o"
-        }
-      }
-      ```
+### Running the Assistant
+1.  Open `BricsAI.sln` in Visual Studio or VS Code.
+2.  Build the `BricsAI.Overlay` project.
+3.  **Start BricsCAD** manually.
+4.  Run `BricsAI.Overlay.exe`.
+5.  The application will automatically connect to the active BricsCAD instance.
 
-3.  **Build the Solution**
-    - Run `build.bat` from the root directory.
-    - Alternatively, open `BricsAI.sln` in Visual Studio and build.
+## 💡 Example Commands
 
-## Usage
+| Intent | Command to Type | What Happens |
+| :--- | :--- | :--- |
+| **Draw Utility** | "Draw a circle at 0,0 with radius 10" | Executes `_.CIRCLE`. |
+| **Layer Control** | "Open layer window" | Opens `LAYERSPANELOPEN` (V19+) or `_.LAYER` (V15). |
+| **Cleanup** | "Clean up the drawing" | Runs `PURGE` and `AUDIT` sequentially. |
+| **Complex Logic** | "Move the largest box to Layer Frame..." | Generates a LISP script to calculate areas, find the max, and move objects. |
 
-1.  **Load the Plugin in BricsCAD**
-    - Open BricsCAD.
-    - Type `NETLOAD` in the command line.
-    - Select the built DLL: `BricsAI.Plugin/bin/Debug/net461/BricsAI.Plugin.dll` (path may vary based on build configuration).
+## 🧩 Technical Details
 
-2.  **Run the Overlay**
-    - Executable: `BricsAI.Overlay/bin/Debug/net8.0-windows/BricsAI.Overlay.exe`
-    - The overlay should appear on top of BricsCAD.
-
-3.  **Execute Commands**
-    - Type natural language requests into the overlay (e.g., "Draw a circle at 0,0 with radius 50", "Select all walls").
-    - The AI will process the request and execute the actions in BricsCAD.
-
-## Features
-
-- **Natural Language Command Translation**: Converts English prompts to BricsCAD LISP commands.
-- **Layer Selection**: Intelligent selection of objects on specific layers (e.g., "Select all furniture").
-- **Named Pipe Communication**: Robust inter-process communication between the overlay UI and the CAD plugin.
+- **COM via `dynamic`**: We use `dynamic` types in C# to avoid strict dependency on specific BricsCAD COM DLL versions, ensuring broader compatibility.
+- **System Prompt**: Converting natural language to LISP is handled by a robust system prompt in `LLMService.cs` with few-shot examples.

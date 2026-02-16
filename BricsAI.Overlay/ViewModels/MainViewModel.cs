@@ -35,17 +35,17 @@ namespace BricsAI.Overlay.ViewModels
 
         public ICommand SendCommand { get; }
 
-        private readonly Services.PipeClient _pipeClient;
+        private readonly Services.ComClient _comClient; // Replaced PipeClient
         private readonly Services.LLMService _llmService;
 
         public MainViewModel()
         {
-            _pipeClient = new Services.PipeClient();
+            _comClient = new Services.ComClient();
             _llmService = new Services.LLMService();
             SendCommand = new RelayCommand(async _ => await SendMessageAsync());
             
             // Initial greeting
-            Messages.Add(new ChatMessage { Role = "Assistant", Content = "Hello! I am your BricsCAD AI Agent. Please ensure you have loaded the plugin in BricsCAD using NETLOAD." });
+            Messages.Add(new ChatMessage { Role = "Assistant", Content = "Hello! I am your BricsCAD AI Agent. connecting via COM Automation... (No NETLOAD needed)" });
         }
 
         private async Task SendMessageAsync()
@@ -59,14 +59,20 @@ namespace BricsAI.Overlay.ViewModels
 
             IsBusy = true;
             
-            // 1. Get script from LLM (Mock)
-            string script = await _llmService.GenerateScriptAsync(userMessage);
+            // 0. Ensure connected
+            if (!_comClient.IsConnected)
+            {
+               // Try connect silently first or just let SendCommand handle it
+            }
 
-            // 2. Send script to BricsCAD
-            string response = await _pipeClient.SendCommandAsync(script);
+            // 1. Get script from LLM (now JSON)
+            string jsonResponse = await _llmService.GenerateScriptAsync(userMessage);
+
+            // 2. Execute Action (handles JSON parsing and version logic internal to ComClient)
+            string response = await _comClient.ExecuteActionAsync(jsonResponse);
 
             // Add response to chat
-            Messages.Add(new ChatMessage { Role = "Assistant", Content = $"Executed: {script}\nResult: {response}" });
+            Messages.Add(new ChatMessage { Role = "Assistant", Content = $"Action: {jsonResponse}\nResult: {response}" });
 
             IsBusy = false;
         }
