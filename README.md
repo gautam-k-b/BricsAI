@@ -1,67 +1,96 @@
-# BricsAI - Intelligent CAD Assistant
+# BricsAI - Intelligent CAD Assistant & Multi-Agent Orchestrator
 
-BricsAI is an advanced AI-powered assistant for BricsCAD, capable of executing complex CAD operations through natural language commands. It leverages OpenAI's GPT-4o model to interpret user intent and controls BricsCAD via COM Automation.
+BricsAI is an advanced, AI-powered multi-agent desktop application designed to orchestrate and execute complex workflow automation directly within **BricsCAD**. By leveraging a "Mixture of Experts" LLM pipeline, the application interprets user intent, programmatically extracts geometric relationships, and natively manipulates CAD layers and entities via COM automation to eliminate repetitive drafting labor.
 
-## 🚀 Key Features
+---
 
-- **Natural Language Control**: Type commands like "Draw a circle" or "Cleanup drawing" instead of memorizing LISP.
-- **Structured Tool Use**: Uses JSON-based communication for precise, error-free command execution.
-- **Multi-Step Automation**: Can perform sequences of actions (e.g., Select -> Filter -> Move) in a single request.
-- **Complex Logic Support**: Handles advanced scenarios like "Find the largest box and move it to Layer Frame" by generating custom LISP algorithms on the fly.
-- **Cross-Version Compatibility**: Automatically detects and adapts to:
-  - **BricsCAD V15** (Legacy commands like `-LAYER`)
-  - **BricsCAD V19+** (Modern panels like `LAYERSPANELOPEN`)
+## 🚀 Key Features & UI Dashboard
 
-## 🏗️ Architecture
+The standalone BricsAI WPF Overlay floats near the BricsCAD instance, providing a rich, interactive Dashboard for rapid automation.
 
-The solution consists of two main components:
+![BricsAI Architecture Agent Interface](./docs/ui_mockup.png) <!-- Note: Save your provided UI image to ./docs/ui_mockup.png -->
 
-1.  **BricsAI.Overlay (WPF Application)**:
-    - The main user interface (chat window).
-    - Connects to a running BricsCAD instance using **COM Interop** (late binding for compatibility).
-    - Handles communication with OpenAI API.
-    - Parses structured JSON responses and executes them in BricsCAD.
+### UI Components & Functionality
 
-2.  **BricsAI.Plugin (Legacy)**:
-    - *Deprecated approach using .NET Plugin/Named Pipes.*
-    - Retained for reference but `BricsAI.Overlay` is the active controller.
+#### **Quick Actions Sidebar**
+Pre-programmed shortcuts that instantly inject optimized macro-prompts into the Multi-Agent engine over the chat interface.
 
-## 🛠️ Setup & Usage
+- **🤖 Run Full AI Proofing**
+  - **Functionality:** Initiates the complete standard 6-step Exhibition Proofing sequence.
+  - **Under the hood:** Preemptively creates standardized `Expo_` layers, performs targeted block explosions, explicitly migrates `outlines` and objects to their respective final presentation states natively via COM without relying on unreliable LISP geometric selections.
+  
+- **🧹 Clean Geometry**
+  - **Functionality:** A fast-action macro to obliterate drawing garbage.
+  - **Under the hood:** Triggers a targeted sequence focusing entirely on running universal `-PURGE` operations and aggressively forcing the deletion of empty vendor layers using the destructive `-LAYDEL` command.
+
+- **📊 Generate Summary**
+  - **Functionality:** A safe, read-only audit mechanism.
+  - **Under the hood:** Commands the Executor Agent *not* to manipulate the drawing. Given the raw Surveyor data, it simply reads back a generated Bill of Materials or object count summary, enabling you to inspect drawings without risking geometric corruption.
+
+#### **Chat Feed & Input Area**
+- **Chat Window:** Displays the real-time reasoning logs as the request cascades from the *Surveyor* -> *Executor* -> *Validator* agents.
+- **Input Text Box:** A standard natural language input field where ad-hoc tasks or complex logical operations (e.g., "Find the largest box and move it to Layer Frame") can be requested outside the Quick Actions.
+
+---
+
+## 🤖 Meet the AI Agents (How it Works)
+
+BricsAI doesn't just use one AI; it uses a team of three specialized virtual assistants that talk to each other to make sure your drawing is handled safely and perfectly.
+
+![Diagram](https://kroki.io/mermaid/svg/eNqFkc1KAzEUhfd9igtuKlisluJYS6F_guCqUytSXKSZm05onJQkYy3MwhcoorhRF-LORxB8G1_APoJppn8WxCyGZHLvd849YUKOaEiUgdNWBuw606iy3enr_fvX7WT6-vAJFzK-3IZcrpLUBacDqMXGyCgB39W7j457fUWGIbRDhJriVFdPoI3kyt36Fvc4AT9W1ziWCqp9jEy5pyplXmkhCTQY29ZQZMSjfnmXVy6dmo-RvRJkjAoCYkgCze7X89P3xx00b5DGZgN1rrjBlFWXATqQ02-u4Ww9KmIwAGprktRsvdroZhe77bRpcVzrRafKZQRC9hPo2LFe3mZ2OkRw63DDTz1EOkj9nEs1WPmxsFV0HSfQwqFURtuMKEWtd48JF7Gy_mbPkXGFVBCtG8hs2PMcGReitIV7rMhwRxslB1jayu97XrA3P-ZGPDBhaX94c_SbgYsAUwZjrID5JYMVD2g-_x_jejn13IjHini4hBQ8Dwv0D8iKBP5yoDW-fbOFxfW_nZXo0Q8eCOrt)
+
+### 1. 🔍 The Surveyor (The Eyes)
+Before BricsAI touches anything, the **Surveyor** looks at your current drawing. It reads all the invisible data—like what layers exist and where your bounding boxes are. It then translates that raw CAD data into plain English (e.g., *"I see 45 booth outlines on a layer called 'outlines'"*) so the rest of the team understands what they are working with.
+
+### 2. ⚙️ The Executor (The Hands)
+The **Executor** is the workhorse. It takes your request (e.g., "Clean the geometry") and pairs it with the Surveyor's report. It then acts like a master programmer, instantly writing a massive list of highly specific CAD commands, targeting the exact layers the Surveyor found, and fires them directly into BricsCAD.
+
+### 3. 🛡️ The Validator (The QA Manager)
+Once BricsCAD finishes running the Executor's code, the **Validator** steps in. It reviews the deep logs generated by BricsCAD to verify that the Executor *actually* did what you asked it to do. If a layer failed to delete or a selection missed, the Validator catches it and reports back to you in the chat!
+
+---
+
+## 🏗️ Technical Architecture (HLD)
+
+The solution operates as a decoupled architecture consisting of a standalone WPF Desktop application running outside the CAD process, communicating directly with BricsCAD via Microsoft Windows Component Object Model (COM) interoperability. 
+
+### Sequence Diagram
+The automation pipeline relies on multiple distinct AI agents to maximize reliability.
+
+![Diagram](https://kroki.io/mermaid/svg/eNqFVE2TEjEQvfsr-shW7cedsqjCwbWwFlbB5WJ56M30DtGQxCSA491_4a_zl9hJZgZ2B5QLw6Tf636vX_D0fUta0ERi5XDzCvhj0QUppEUd4MGT670sjHGl1BiMA_TwMIUbmKHUK0n7mSlJ9RDLrdtRncu753FFfDQYTy969W9_kNg29N3zP-oLsymUjMcMeOOk8MV4AsX9DKY6kDO2h1ihkmWr4PDjqEeCRP1Xo9GR4iFwJ_HNw8ctf8FYBGk0MDTUljxI7qdDwh6BEkUz4hAW0XQfYOJwL3UFy4CBGkhTdPWy6QL3uQ4mGBAGd1iT85dAQVxnP070bK0ewlijqn9SYhj7WotBeszIuWFasyMHB0DyzToKHnhKiHaq2BI0bsi_fnQjVmpAmUoKVOBpw65KAcJwmmzw14m55evJWbb1XRoWZI0L55S0IRjCO9LkePQZCmd81pKxl2loHV6KOmDZXrsNvCVKr-LiLIa1B9QlVA1xEoewQe_ljuD98n4O6BzWYJ4gGKOABatGYMvdE_g5A5t4fFCo4cs5cUfRyHyUYVlcxGZJyhgLt-wVoVgfRklnz9PzjHOOgYWoGgpHMUCf0FUUICfoJLi9QXFPuuQTXlY5uIgpN49frxOSDbKW05sIuOo_-Z1QQKmobBRGU-5M5c9Z0t3IYXs5qQNmWyI629LV9pr--f0LVuTkE2c074GXyjPcwG0a5kTjeOF5Wuktx51D6bcq8KWOf3LFGsNfQPe-QQ==)
+
+---
+
+## 🧩 Key Technical Implementations
+
+1. **Native COM Layer Migration (`NET:SELECT_LAYER:<source>:<target>`):**
+   - The application bypasses unreliable LISP `ssget` selections which risk "bleed-over" between commands.
+   - Using the custom tool structure, the Executor Agent forces the C# host to natively create target layers implicitly and assign objects programmatically ($Area$ boundaries, $LWPOLYLINE$ closure checks, and direct `.Layer` assignments).
+
+2. **Entity Splitting / Safe Deletion:**
+   - Mixed-use layers (like Layer `0` having both geometry and Text) are explicitly handled by filtering entity definitions, ensuring walls map to `Expo_Building` while labels map to `Expo_Markings`.
+
+3. **Pluggable Capabilities:**
+   - Instead of monolithic updates to the AI's core capabilities, `BricsAI.Plugins` can be added dynamically and injected into the LLM context.
+
+4. **Configurable Layer Mappings:**
+   - To handle unpredictable layer naming conventions from external vendors, BricsAI reads a `layer_mappings.json` configuration file at runtime.
+   - This allows users to map unknown source layers directly to standard A2Z layers (e.g., mapping `"l1xxxx"` to `"Expo_BoothOutline"`) without altering any code.
+   - The Orchestrator automatically injects these mappings into the AI Agents' contexts, prompting them to prioritize explicit mappings over geometric guesswork.
+
+![Diagram](https://kroki.io/mermaid/svg/eNpLy8kvT85ILCpRCHHhUgCC0OLUIo3oD_MnrnjU0Pth_qTdYJFYTQVdXbsa15TMkuIaBa9gf7_onMTK1KL43MSCgsy89GK9rOL8vFiwCSBZsGqf_MSU1BSFpMoahVDPaLBZ4QFuCv5FyRmpxSVFiSX5RRAdoZ5g9Z55WanJJcUKzvl5JakVJTUKwaVFZamV-UVAvVN64TwFx_TUvBL8Ol0rUpNLgeZHP5o18_2OfjgfWS_cPF09oBEBRZn5RZklmVWpxQq-UE8hzAFrgBsCDgowB6jYJbMIaLeCc2Ix0F6noszkYmdHl2gNGEvBBxROxZoQO8FEcUllTiokmNIyc3KslNMs04zSTHSAYZKfnWqlnGxuZGqSCgDh65BX)
+
+---
+
+## 🛠️ Setup & Configuration
 
 ### Prerequisites
 - BricsCAD (V15 or newer recommended).
-- .NET 9.0 SDK.
-- OpenAI API Key.
+- .NET 9.0 SDK installed on the workstation.
+- An Active OpenAI API Key.
 
-### Configuration
-1.  Navigate to `BricsAI.Overlay/appsettings.json`.
-2.  Add your OpenAI API Key:
-    ```json
-    {
-      "OpenAI": {
-        "ApiKey": "sk-...",
-        "Model": "gpt-4o"
-      }
-    }
-    ```
-
-### Running the Assistant
-1.  Open `BricsAI.sln` in Visual Studio or VS Code.
-2.  Build the `BricsAI.Overlay` project.
-3.  **Start BricsCAD** manually.
-4.  Run `BricsAI.Overlay.exe`.
-5.  The application will automatically connect to the active BricsCAD instance.
-
-## 💡 Example Commands
-
-| Intent | Command to Type | What Happens |
-| :--- | :--- | :--- |
-| **Draw Utility** | "Draw a circle at 0,0 with radius 10" | Executes `_.CIRCLE`. |
-| **Layer Control** | "Open layer window" | Opens `LAYERSPANELOPEN` (V19+) or `_.LAYER` (V15). |
-| **Cleanup** | "Clean up the drawing" | Runs `PURGE` and `AUDIT` sequentially. |
-| **Complex Logic** | "Move the largest box to Layer Frame..." | Generates a LISP script to calculate areas, find the max, and move objects. |
-
-## 🧩 Technical Details
-
-- **COM via `dynamic`**: We use `dynamic` types in C# to avoid strict dependency on specific BricsCAD COM DLL versions, ensuring broader compatibility.
-- **System Prompt**: Converting natural language to LISP is handled by a robust system prompt in `LLMService.cs` with few-shot examples.
+### Running the Application
+1. Configure `BricsAI.Overlay/appsettings.json` with your OpenAI Key.
+2. Build the `BricsAI.sln` project via Visual Studio or `build.bat`.
+3. Launch BricsCAD manually.
+4. Run `BricsAI.Overlay.exe` to spawn the multi-agent UI overlay over BricsCAD.

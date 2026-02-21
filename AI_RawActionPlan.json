@@ -1,0 +1,80 @@
+{
+  "tool_calls": [
+    {
+      "command_name": "LOCK_LAYER",
+      "lisp_code": "(command \"-LAYER\" \"LOCK\" \"outlines\" \"\")"
+    },
+    {
+      "command_name": "LOCK_LAYER",
+      "lisp_code": "(command \"-LAYER\" \"LOCK\" \"boothNo\" \"\")"
+    },
+    {
+      "command_name": "EXPLODE_BLOCKS",
+      "lisp_code": "(command \"_.EXPLODE\" (ssget \"_X\" '((0 . \"INSERT\"))) \"\")"
+    },
+    {
+      "command_name": "EXPLODE_BLOCKS",
+      "lisp_code": "(command \"_.EXPLODE\" (ssget \"_X\" '((0 . \"INSERT\"))) \"\")"
+    },
+    {
+      "command_name": "UNLOCK_ALL_LAYERS",
+      "lisp_code": "(command \"-LAYER\" \"UNLOCK\" \"*\" \"\")"
+    },
+    {
+      "command_name": "SELECT_AND_ASSIGN_LAYER",
+      "lisp_code": "NET:SELECT_LAYER:outlines:Expo_BoothOutline"
+    },
+    {
+      "command_name": "SELECT_AND_ASSIGN_LAYER",
+      "lisp_code": "NET:SELECT_LAYER:boothNo:Expo_BoothNumber"
+    },
+    {
+      "command_name": "CREATE_AND_ASSIGN_LAYER",
+      "lisp_code": "(command \"-LAYER\" \"Make\" \"Expo_Building\" \"\")"
+    },
+    {
+      "command_name": "MOVE_GEOMETRY_TO_LAYER",
+      "lisp_code": "(command \"_.CHPROP\" (ssget \"_X\" '((0 . \"LINE,LWPOLYLINE\") (8 . \"NewLayer1,0\"))) \"\" \"_LA\" \"Expo_Building\" \"\")"
+    },
+    {
+      "command_name": "CREATE_AND_ASSIGN_LAYER",
+      "lisp_code": "(command \"-LAYER\" \"Make\" \"Expo_Markings\" \"\")"
+    },
+    {
+      "command_name": "MOVE_TEXT_TO_LAYER",
+      "lisp_code": "(command \"_.CHPROP\" (ssget \"_X\" '((0 . \"TEXT,MTEXT\") (8 . \"0,building text\"))) \"\" \"_LA\" \"Expo_Markings\" \"\")"
+    },
+    {
+      "command_name": "SELECT_AND_ASSIGN_LAYER",
+      "lisp_code": "NET:SELECT_COLUMNS:Expo_Column"
+    },
+    {
+      "command_name": "SELECT_AND_ASSIGN_LAYER",
+      "lisp_code": "NET:SELECT_UTILITIES:Expo_View2"
+    },
+    {
+      "command_name": "APPLY_LAYER_STYLING",
+      "lisp_code": "(c:a2zcolor)"
+    },
+    {
+      "command_name": "PURGE_ALL",
+      "lisp_code": "(command \"-PURGE\" \"All\" \"*\" \"N\")"
+    },
+    {
+      "command_name": "DELETE_LAYER",
+      "lisp_code": "(command \"-LAYDEL\" \"N\" \"outlines\" \"\" \"Y\")"
+    },
+    {
+      "command_name": "DELETE_LAYER",
+      "lisp_code": "(command \"-LAYDEL\" \"N\" \"boothNo\" \"\" \"Y\")"
+    },
+    {
+      "command_name": "DELETE_LAYER",
+      "lisp_code": "(command \"-LAYDEL\" \"N\" \"NewLayer1\" \"\" \"Y\")"
+    },
+    {
+      "command_name": "DELETE_LAYER",
+      "lisp_code": "(command \"-LAYDEL\" \"N\" \"building text\" \"\" \"Y\")"
+    }
+  ]
+}
