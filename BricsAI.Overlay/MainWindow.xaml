@@ -6,7 +6,7 @@
         xmlns:local="clr-namespace:BricsAI.Overlay"
         xmlns:vm="clr-namespace:BricsAI.Overlay.ViewModels"
         mc:Ignorable="d"
-        Title="BricsAI Assistant" Height="600" Width="450"
+        Title="BricsAI Assistant" Height="600" Width="650"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         Topmost="True" ResizeMode="CanResizeWithGrip" WindowStartupLocation="CenterScreen">
     
@@ -63,23 +63,75 @@
         </Border.Effect>
         
         <Grid>
+            <!-- Define Columns: Left Panel for Actions, Right Panel for Chat -->
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="200"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            
             <Grid.RowDefinitions>
                 <RowDefinition Height="40"/> <!-- Title Bar -->
-                <RowDefinition Height="*"/>  <!-- Chat History -->
-                <RowDefinition Height="Auto"/> <!-- Input Area -->
+                <RowDefinition Height="*"/>  <!-- Chat Area / Dashboard -->
             </Grid.RowDefinitions>
 
-            <!-- Title Bar -->
-            <Grid Grid.Row="0" Background="Transparent" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
-                <TextBlock Text="BricsAI Assistant" Foreground="#BBFFFFFF" VerticalAlignment="Center" Margin="15,0,0,0" FontSize="14" FontWeight="SemiBold"/>
+            <!-- Title Bar (Spans both columns) -->
+            <Grid Grid.Row="0" Grid.ColumnSpan="2" Background="Transparent" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                <TextBlock Text="BricsAI Architecture Agent" Foreground="#BBFFFFFF" VerticalAlignment="Center" Margin="15,0,0,0" FontSize="14" FontWeight="SemiBold"/>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,10,0">
                     <Button Content="_" Width="30" Height="25" Click="Minimize_Click" Background="Transparent" Foreground="White" BorderThickness="0"/>
                     <Button Content="X" Width="30" Height="25" Click="Close_Click" Background="Transparent" Foreground="#FF5555" BorderThickness="0"/>
                 </StackPanel>
             </Grid>
 
-            <!-- Chat List -->
-            <ScrollViewer x:Name="ChatScrollViewer" Grid.Row="1" Margin="10,0,10,10">
+            <!-- Dashboard Sidebar (Left) -->
+            <Border Grid.Row="1" Grid.Column="0" Background="#2A2A2A" CornerRadius="0,0,0,10" BorderBrush="#33FFFFFF" BorderThickness="0,1,1,0">
+                <StackPanel Margin="10,20,10,10">
+                    <TextBlock Text="Quick Actions" Foreground="#00A8FF" FontSize="12" FontWeight="Bold" Margin="5,0,0,10" TextWrapping="Wrap"/>
+                    
+                    <Button Content="🤖 Run Full AI Proofing" Command="{Binding RunProofingCommand}" 
+                            Height="40" Margin="0,0,0,10" Background="#333" Foreground="White" BorderThickness="1" BorderBrush="#555" 
+                            HorizontalContentAlignment="Left" Padding="10,0" ToolTip="Execute exact order of operations and geometry checks.">
+                        <Button.Resources>
+                            <Style TargetType="Border">
+                                <Setter Property="CornerRadius" Value="6"/>
+                            </Style>
+                        </Button.Resources>
+                    </Button>
+                    
+                    <Button Content="🧹 Clean Geometry" Command="{Binding CleanGeometryCommand}" 
+                            Height="40" Margin="0,0,0,10" Background="#333" Foreground="White" BorderThickness="1" BorderBrush="#555" 
+                            HorizontalContentAlignment="Left" Padding="10,0" ToolTip="Purge, Overkill, and delete invisible/frozen layers.">
+                        <Button.Resources>
+                            <Style TargetType="Border">
+                                <Setter Property="CornerRadius" Value="6"/>
+                            </Style>
+                        </Button.Resources>
+                    </Button>
+                    
+                    <Button Content="📊 Generate Summary" Command="{Binding GenerateSummaryCommand}" 
+                            Height="40" Margin="0,0,0,10" Background="#333" Foreground="White" BorderThickness="1" BorderBrush="#555" 
+                            HorizontalContentAlignment="Left" Padding="10,0" ToolTip="Ask Surveyor to count objects and extract BOM without mutating variables.">
+                        <Button.Resources>
+                            <Style TargetType="Border">
+                                <Setter Property="CornerRadius" Value="6"/>
+                            </Style>
+                        </Button.Resources>
+                    </Button>
+                    
+                    <Border Height="1" Background="#444" Margin="10,10,10,20"/>
+                    
+                    <TextBlock Text="Powered by BricsAI Multi-Agent Architecture." Foreground="#666" FontSize="10" TextWrapping="Wrap" TextAlignment="Center"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Chat Panel (Right) -->
+            <Grid Grid.Row="1" Grid.Column="1">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <ScrollViewer x:Name="ChatScrollViewer" Grid.Row="0" Margin="10,0,10,10">
                 <ItemsControl ItemsSource="{Binding Messages}">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
@@ -109,7 +161,7 @@
             </ScrollViewer>
 
             <!-- Input Area -->
-            <Border Grid.Row="2" Background="#333333" CornerRadius="0,0,10,10" Padding="15">
+            <Border Grid.Row="1" Background="#333333" CornerRadius="0,0,10,0" Padding="15">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
@@ -121,7 +173,7 @@
                              FontSize="14" CaretBrush="#00A8FF"
                              Height="40" VerticalContentAlignment="Center" Background="#444" Foreground="White" BorderThickness="0" Padding="10,0"/>
                     
-                    <Button Grid.Column="1" Content="Send" Command="{Binding SendCommand}" Margin="10,0,0,0" Padding="10,5" Background="#0078D7" Foreground="White" BorderThickness="0">
+                    <Button Grid.Column="1" Content="Send" Command="{Binding SendCommand}" Margin="10,0,0,0" Padding="10,5" Background="#00A8FF" Foreground="White" BorderThickness="0">
                         <Button.Resources>
                             <Style TargetType="Border">
                                 <Setter Property="CornerRadius" Value="5"/>
@@ -130,6 +182,7 @@
                     </Button>
                 </Grid>
             </Border>
+            </Grid>
         </Grid>
     </Border>
 </Window>
