@@ -1,5 +1,7 @@
+using System;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
@@ -32,8 +34,11 @@ namespace BricsAI.Overlay.ViewModels
             {
                 _isBusy = value;
                 OnPropertyChanged();
+                OnPropertyChanged(nameof(IsNotBusy));
             }
         }
+
+        public bool IsNotBusy => !IsBusy;
 
         public ICommand SendCommand { get; }
         
@@ -92,8 +97,9 @@ namespace BricsAI.Overlay.ViewModels
             string layerMappings = "";
             try
             {
-                if (File.Exists("layer_mappings.json"))
-                    layerMappings = File.ReadAllText("layer_mappings.json");
+                string mappingPath = Path.Combine(System.AppContext.BaseDirectory, "layer_mappings.json");
+                if (File.Exists(mappingPath))
+                    layerMappings = File.ReadAllText(mappingPath);
             }
             catch { }
 
@@ -104,17 +110,23 @@ namespace BricsAI.Overlay.ViewModels
                 try
                 {
                     string getLayersCmd = @"{ ""tool_calls"": [{ ""command_name"": ""NET_GET_LAYERS"", ""lisp_code"": ""NET:GET_LAYERS:"" }] }";
-                    currentLayers = await _comClient.ExecuteActionAsync(getLayersCmd);
+                    currentLayers = await Task.Run(() => _comClient.ExecuteActionAsync(getLayersCmd));
                 }
                 catch { }
             }
 
             // --- MULTI-AGENT ORCHESTRATION START ---
+            int totalTokens = 0;
+            var stopwatch = Stopwatch.StartNew();
 
             // Agent 1: Surveyor
-            Messages.Add(new ChatMessage { Role = "Assistant", Content = "Surveyor Agent: Gathering drawing context..." });
-            string surveyorSummary = await _surveyor.AnalyzeDrawingStateAsync(userMessage, currentLayers, layerMappings);
-            Messages.Add(new ChatMessage { Role = "Assistant", Content = $"Surveyor Report:\n{surveyorSummary}" });
+            var surveyorMsg = new ChatMessage { Role = "Assistant", Content = "👷‍♂️ Surveyor Agent: Putting on my hard hat and inspecting the raw drawing layers...", IsThinking = true };
+            Messages.Add(surveyorMsg);
+            var surveyorResult = await Task.Run(() => _surveyor.AnalyzeDrawingStateAsync(userMessage, currentLayers, layerMappings));
+            surveyorMsg.IsThinking = false;
+            string surveyorSummary = surveyorResult.Summary;
+            totalTokens += surveyorResult.Tokens;
+            Messages.Add(new ChatMessage { Role = "Assistant", Content = $"📋 Surveyor Report:\n{surveyorSummary}" });
 
             int maxRetries = 2;
             int attempt = 0;
@@ -127,12 +139,19 @@ namespace BricsAI.Overlay.ViewModels
                 string executorContext = attempt == 1 ? surveyorSummary : surveyorSummary + $"\n\nVALIDATOR FEEDBACK FROM PREVIOUS ATTEMPT:\n{feedback}";
                 
                 // Agent 2: Executor
-                Messages.Add(new ChatMessage { Role = "Assistant", Content = $"Executor Agent: Generating LISP/NET Macros (Attempt {attempt})..." });
-                string actionPlanJson = await _executor.GenerateMacrosAsync(userMessage, executorContext, _comClient.MajorVersion, layerMappings);
+                var executorMsg = new ChatMessage { Role = "Assistant", Content = $"⚙️ Executor Agent: Drafting the master execution plan to restructure your booths! (Attempt {attempt})...", IsThinking = true };
+                Messages.Add(executorMsg);
+                var executorResult = await Task.Run(() => _executor.GenerateMacrosAsync(userMessage, executorContext, _comClient.MajorVersion, layerMappings));
+                executorMsg.IsThinking = false;
+                string actionPlanJson = executorResult.ActionPlan;
+                totalTokens += executorResult.Tokens;
                 
                 // Execute against COM
-                string executionLogs = await _comClient.ExecuteActionAsync(actionPlanJson);
-                Messages.Add(new ChatMessage { Role = "Assistant", Content = $"Execution Logs:\n{executionLogs}" });
+                var cadMsg = new ChatMessage { Role = "Assistant", Content = $"🚀 BricsCAD: Hijacking your mouse to execute native tools...", IsThinking = true };
+                Messages.Add(cadMsg);
+                string executionLogs = await Task.Run(() => _comClient.ExecuteActionAsync(actionPlanJson));
+                cadMsg.IsThinking = false;
+                Messages.Add(new ChatMessage { Role = "Assistant", Content = $"📝 Execution Logs:\n{executionLogs}" });
 
                 // DUMP TO DISK FOR DEBUGGING
                 File.WriteAllText("AI_Context.txt", executorContext);
@@ -140,26 +159,33 @@ namespace BricsAI.Overlay.ViewModels
                 File.WriteAllText("AI_ExecutionLogs.txt", executionLogs);
 
                 // Agent 3: Validator
-                Messages.Add(new ChatMessage { Role = "Assistant", Content = "Validator Agent: Reviewing results..." });
-                var validationResult = await _validator.ValidateExecutionAsync(userMessage, executionLogs);
+                var validatorMsg = new ChatMessage { Role = "Assistant", Content = "🔍 Validator Agent: Grabbing my magnifying glass to check BricsCAD's work...", IsThinking = true };
+                Messages.Add(validatorMsg);
+                var validationResult = await Task.Run(() => _validator.ValidateExecutionAsync(userMessage, executionLogs));
+                validatorMsg.IsThinking = false;
                 
                 success = validationResult.success;
                 feedback = validationResult.feedback;
+                totalTokens += validationResult.tokens;
 
                 if (success)
                 {
-                    Messages.Add(new ChatMessage { Role = "Assistant", Content = $"✅ Validation Passed: {feedback}" });
+                    Messages.Add(new ChatMessage { Role = "Assistant", Content = $"✅ Validation Passed: The blueprints look pristine! ({feedback})" });
                 }
                 else
                 {
-                    Messages.Add(new ChatMessage { Role = "Assistant", Content = $"❌ Validation Failed: {feedback}" });
+                    Messages.Add(new ChatMessage { Role = "Assistant", Content = $"❌ Validation Failed: Hmm, something mathematically doesn't add up... ({feedback})" });
                 }
             }
 
             if (!success)
             {
-                Messages.Add(new ChatMessage { Role = "Assistant", Content = "System: Multi-Agent flow exhausted retries. Please refine your prompt or manually intervene." });
+                Messages.Add(new ChatMessage { Role = "Assistant", Content = "⚠️ System: Multi-Agent flow exhausted retries. Please refine your layer mappings or manually intervene." });
             }
+
+            stopwatch.Stop();
+            double seconds = Math.Round(stopwatch.Elapsed.TotalSeconds, 1);
+            Messages.Add(new ChatMessage { Role = "Assistant", Content = $"📊 Performance: {totalTokens} API tokens consumed. Proofing completed in {seconds} seconds." });
 
             IsBusy = false;
         }

@@ -1,0 +1,10 @@
+Step 1: WARNING Unrecognized NET command: NET:PREPARE_GEOMETRY
+Step 2: Executed LISP [(command "-LAYER" "UNLOCK" "*" "")]
+Step 3: Applied mappings natively with a single batch execution via LISP script load.
+Step 4: No booth boxes found.
+Step 5: Selected 1 columns.
+Step 6: Selected 2271 utility hatches/symbols.
+Step 7: Executed LISP [(c:a2zcolor)]
+Step 8: Executed LISP [(command "-PURGE" "All" "*" "N")]
+Step 9: Renamed 20 uncategorized layers to Deleted_ prefix.
+Step 10: Locked Expo_BoothNumber and Expo_BoothOutline via COM.

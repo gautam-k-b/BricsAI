@@ -1,5 +1,23 @@
 {
     "UnknownLayerName": "A2ZLayerName",
     "l1xxxx": "Expo_BoothOutline",
-    "building text": "Expo_Markings"
+    "building text": "Expo_Markings",
+    "show_title": "Expo_Markings",
+    "A-DOOR": "Expo_Building",
+    "S-COLS": "Expo_Column",
+    "Q-SPCQ": "Expo_Building",
+    "A-GENM": "Expo_Building",
+    "E-ELEC-FIXT": "Expo_View2",
+    "A-FLOR-HRAL": "Expo_Building",
+    "A-DETL": "Expo_Building",
+    "E-LITE-EQPM": "Expo_Building",
+    "A-DOOR-FRAM": "Expo_Building",
+    "A-DETL-MBND": "Expo_Building",
+    "A-DETL-GENF": "Expo_Building",
+    "G-ANNO-TEXT": "Expo_Markings",
+    "bldg_fire": "Expo_View2",
+    "bldg_text": "Expo_Markings",
+    "bldg_walls": "Expo_Building",
+    "t-airwalls": "Expo_Building",
+    "bldg_elec": "Expo_View2"
 }

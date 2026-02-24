@@ -9,7 +9,7 @@ namespace BricsAI.Overlay.Services.Agents
             Name = "ValidatorAgent";
         }
 
-        public async Task<(bool success, string feedback)> ValidateExecutionAsync(string userPrompt, string executionLogs)
+        public async Task<(bool success, string feedback, int tokens)> ValidateExecutionAsync(string userPrompt, string executionLogs)
         {
             string systemPrompt = @"You are the Validator Agent for BricsCAD.
 Your job is to read the execution logs resulting from the Executor Agent's actions and determine if the user's objective was met successfully, or if there were errors or missing steps.
@@ -23,7 +23,9 @@ Follow that with a newline, and then provide a brief sentence explaining why, or
 
             string prompt = $"USER OBJECTIVE:\n{userPrompt}\n\nEXECUTION LOGS:\n{executionLogs}\n\nDid the execution succeed?";
             
-            string response = await CallOpenAIAsync(systemPrompt, prompt, expectJson: false);
+            var result = await CallOpenAIAsync(systemPrompt, prompt, expectJson: false);
+            string response = result.Content;
+            int tokens = result.Tokens;
             
             bool success = response.Trim().StartsWith("PASS");
             
@@ -35,7 +37,7 @@ Follow that with a newline, and then provide a brief sentence explaining why, or
                 feedback = response.Substring(spaceIndex + 1).Trim();
             }
 
-            return (success, feedback);
+            return (success, feedback, tokens);
         }
     }
 }

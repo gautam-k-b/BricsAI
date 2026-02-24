@@ -63,6 +63,15 @@ namespace BricsAI.Overlay.Services.Agents
         {
             [JsonPropertyName("choices")]
             public Choice[]? Choices { get; set; }
+
+            [JsonPropertyName("usage")]
+            public Usage? Usage { get; set; }
+        }
+
+        protected class Usage
+        {
+            [JsonPropertyName("total_tokens")]
+            public int TotalTokens { get; set; }
         }
 
         protected class Choice
@@ -99,13 +108,13 @@ namespace BricsAI.Overlay.Services.Agents
             }
         }
 
-        protected async Task<string> CallOpenAIAsync(string systemPrompt, string userPrompt, bool expectJson = false)
+        protected async Task<(string Content, int Tokens)> CallOpenAIAsync(string systemPrompt, string userPrompt, bool expectJson = false)
         {
             if (string.IsNullOrWhiteSpace(_apiKey) || _apiKey == "YOUR_API_KEY_HERE")
             {
-                return expectJson 
+                return (expectJson 
                     ? $@"{{ ""tool_calls"": [{{ ""command_name"": ""ALERT"", ""lisp_code"": ""(alert \""Please configure your OpenAI API Key.\"")"" }}] }}"
-                    : "Error: Please configure your OpenAI API Key.";
+                    : "Error: Please configure your OpenAI API Key.", 0);
             }
 
             var requestBody = new OpenAIRequest
@@ -145,13 +154,13 @@ namespace BricsAI.Overlay.Services.Agents
                     if (script.StartsWith("```")) script = script.Replace("```", "");
                 }
 
-                return script.Trim();
+                return (script.Trim(), responseData?.Usage?.TotalTokens ?? 0);
             }
             catch (Exception ex)
             {
-                return expectJson 
+                return (expectJson 
                     ? $@"{{ ""tool_calls"": [{{ ""command_name"": ""ALERT"", ""lisp_code"": ""(alert \""Agent {Name} Error: {ex.Message}\"")"" }}] }}"
-                    : $"Agent {Name} Error: {ex.Message}";
+                    : $"Agent {Name} Error: {ex.Message}", 0);
             }
         }
     }

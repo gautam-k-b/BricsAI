@@ -88,7 +88,7 @@
                 <StackPanel Margin="10,20,10,10">
                     <TextBlock Text="Quick Actions" Foreground="#00A8FF" FontSize="12" FontWeight="Bold" Margin="5,0,0,10" TextWrapping="Wrap"/>
                     
-                    <Button Content="🤖 Run Full AI Proofing" Command="{Binding RunProofingCommand}" 
+                    <Button Content="🤖 Run Full AI Proofing" Command="{Binding RunProofingCommand}" IsEnabled="{Binding IsNotBusy}"
                             Height="40" Margin="0,0,0,10" Background="#333" Foreground="White" BorderThickness="1" BorderBrush="#555" 
                             HorizontalContentAlignment="Left" Padding="10,0" ToolTip="Execute exact order of operations and geometry checks.">
                         <Button.Resources>
@@ -98,7 +98,7 @@
                         </Button.Resources>
                     </Button>
                     
-                    <Button Content="🧹 Clean Geometry" Command="{Binding CleanGeometryCommand}" 
+                    <Button Content="🧹 Clean Geometry" Command="{Binding CleanGeometryCommand}" IsEnabled="{Binding IsNotBusy}"
                             Height="40" Margin="0,0,0,10" Background="#333" Foreground="White" BorderThickness="1" BorderBrush="#555" 
                             HorizontalContentAlignment="Left" Padding="10,0" ToolTip="Purge, Overkill, and delete invisible/frozen layers.">
                         <Button.Resources>
@@ -108,7 +108,7 @@
                         </Button.Resources>
                     </Button>
                     
-                    <Button Content="📊 Generate Summary" Command="{Binding GenerateSummaryCommand}" 
+                    <Button Content="📊 Generate Summary" Command="{Binding GenerateSummaryCommand}" IsEnabled="{Binding IsNotBusy}"
                             Height="40" Margin="0,0,0,10" Background="#333" Foreground="White" BorderThickness="1" BorderBrush="#555" 
                             HorizontalContentAlignment="Left" Padding="10,0" ToolTip="Ask Surveyor to count objects and extract BOM without mutating variables.">
                         <Button.Resources>
@@ -152,6 +152,53 @@
                                     <StackPanel>
                                         <TextBlock Text="{Binding DisplayName}" FontWeight="Bold" Foreground="#DDD" Margin="0,0,0,2"/>
                                         <TextBlock Text="{Binding Content}" Foreground="White" TextWrapping="Wrap"/>
+                                        
+                                        <!-- Animated Thinking Dots -->
+                                        <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
+                                            <StackPanel.Style>
+                                                <Style TargetType="StackPanel">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsThinking}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </StackPanel.Style>
+                                            <Ellipse Width="6" Height="6" Fill="#888888" Margin="0,0,4,0">
+                                                <Ellipse.Triggers>
+                                                    <EventTrigger RoutedEvent="Loaded">
+                                                        <BeginStoryboard>
+                                                            <Storyboard AutoReverse="True" RepeatBehavior="Forever">
+                                                                <DoubleAnimation Storyboard.TargetProperty="Opacity" From="0.3" To="1" Duration="0:0:0.5"/>
+                                                            </Storyboard>
+                                                        </BeginStoryboard>
+                                                    </EventTrigger>
+                                                </Ellipse.Triggers>
+                                            </Ellipse>
+                                            <Ellipse Width="6" Height="6" Fill="#888888" Margin="0,0,4,0">
+                                                <Ellipse.Triggers>
+                                                    <EventTrigger RoutedEvent="Loaded">
+                                                        <BeginStoryboard>
+                                                            <Storyboard AutoReverse="True" RepeatBehavior="Forever">
+                                                                <DoubleAnimation Storyboard.TargetProperty="Opacity" From="0.3" To="1" Duration="0:0:0.5" BeginTime="0:0:0.2"/>
+                                                            </Storyboard>
+                                                        </BeginStoryboard>
+                                                    </EventTrigger>
+                                                </Ellipse.Triggers>
+                                            </Ellipse>
+                                            <Ellipse Width="6" Height="6" Fill="#888888" Margin="0,0,0,0">
+                                                <Ellipse.Triggers>
+                                                    <EventTrigger RoutedEvent="Loaded">
+                                                        <BeginStoryboard>
+                                                            <Storyboard AutoReverse="True" RepeatBehavior="Forever">
+                                                                <DoubleAnimation Storyboard.TargetProperty="Opacity" From="0.3" To="1" Duration="0:0:0.5" BeginTime="0:0:0.4"/>
+                                                            </Storyboard>
+                                                        </BeginStoryboard>
+                                                    </EventTrigger>
+                                                </Ellipse.Triggers>
+                                            </Ellipse>
+                                        </StackPanel>
                                     </StackPanel>
                                 </Border>
                             </Grid>
@@ -173,7 +220,7 @@
                              FontSize="14" CaretBrush="#00A8FF"
                              Height="40" VerticalContentAlignment="Center" Background="#444" Foreground="White" BorderThickness="0" Padding="10,0"/>
                     
-                    <Button Grid.Column="1" Content="Send" Command="{Binding SendCommand}" Margin="10,0,0,0" Padding="10,5" Background="#00A8FF" Foreground="White" BorderThickness="0">
+                    <Button Grid.Column="1" Content="Send" Command="{Binding SendCommand}" IsEnabled="{Binding IsNotBusy}" Margin="10,0,0,0" Padding="10,5" Background="#00A8FF" Foreground="White" BorderThickness="0">
                         <Button.Resources>
                             <Style TargetType="Border">
                                 <Setter Property="CornerRadius" Value="5"/>

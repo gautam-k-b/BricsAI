@@ -15,7 +15,7 @@ namespace BricsAI.Overlay.Services.Agents
             _pluginManager.LoadPlugins();
         }
 
-        public async Task<string> GenerateMacrosAsync(string userPrompt, string surveyorContext, int majorVersion, string layerMappings = "")
+        public async Task<(string ActionPlan, int Tokens)> GenerateMacrosAsync(string userPrompt, string surveyorContext, int majorVersion, string layerMappings = "")
         {
             var applicablePlugins = _pluginManager.GetPluginsForVersion(majorVersion).ToList();
             var toolsPrompt = string.Join("\n\n", applicablePlugins.Select(p => p.GetPromptExample()));
@@ -30,28 +30,17 @@ CRITICAL RULES:
 2. If the user asks to select objects by layer, or specifically inner/outer objects, YOU MUST use the exact `NET:` prefix commands shown in the tools below. The C# host handles the geometry natively.
 3. ALWAYS prioritize using the provided tool examples. DO NOT hallucinate commands like `_UNSELECT` or nested LISP evaluations for selections.
 4. NO LISP WRAPPERS FOR NET COMMANDS: When using a `NET:` prefix command (like `NET:SELECT_BOOTH_BOXES`), you MUST use the exact raw string value in the `lisp_code` field. DO NOT wrap it in LISP syntax like `(c:NET:...)` or `(command ""NET:..."")`. Just write exactly `NET:SELECT_BOOTH_BOXES`.
-5. MACRO SEQUENCES: You are allowed and encouraged to output massive JSON arrays containing 10+ `tool_calls` to sequentially orchestrate full workflows. **CRITICAL: NEVER STOP EARLY. If generating a 6-step proofing sequence, you MUST output all 6 steps A through F in a single response.**
+5. MACRO SEQUENCES: You are allowed and encouraged to output massive JSON arrays containing 10+ `tool_calls` to sequentially orchestrate full workflows. **CRITICAL: NEVER STOP EARLY. If generating a proofing sequence, you MUST output all 6 steps A through F in a single response.**
 6. PROOFING ORDER OF OPERATIONS: If asked to proof a drawing, you MUST execute exactly this sequence:
-   A. Lock Vendor Layers: Look at the Surveyor's context. Run `(command ""-LAYER"" ""LOCK"" ""<surveyor_layer_name>"" """")` for each layer containing booth boxes or booth text. DO NOT lock general building text layers.
-   B. Restrict Explosions: Explode block references iteratively, EXCEPT do NOT explode Arc, Line, Circle, Ellipse, Polyline, Text, or Solid. Run an explosion ONLY on blocks: `(command ""_.EXPLODE"" (ssget ""_X"" '((0 . ""INSERT""))) """")` multiple times if needed.
-   C. Unlock All Layers: After explosion, you MUST unlock all layers using `(command ""-LAYER"" ""UNLOCK"" ""*"" """")` BEFORE running any migrations!
-   D. Geometric Migration & Standardization: Assign geometry directly to these exact layers using the `:TARGET_LAYER` suffix. C# natively creates the target layers and handles the assignment natively without LISP `CHPROP` when using `NET:` tools. Use the exact source layers identified by the Surveyor if possible:
-      - Expo_BoothOutline (If surveyor identified a layer like 'outlines', use `NET:SELECT_LAYER:outlines:Expo_BoothOutline`. Otherwise use `NET:SELECT_BOOTH_BOXES:Expo_BoothOutline`)
-      - Expo_BoothNumber (If surveyor identified a layer like 'boothNo', use `NET:SELECT_LAYER:boothNo:Expo_BoothNumber`.)
-      - Expo_MaxBoothOutline (if applicable)
-      - Expo_MaxBoothNumber (if applicable)
-      - Expo_Building (If surveyor identified a building layer like 'NewLayer1' or '0', move its non-text geometry here. e.g., `(command ""-LAYER"" ""Make"" ""Expo_Building"" """")` then `(command ""_.CHPROP"" (ssget ""_X"" '((0 . ""LINE,LWPOLYLINE"") (8 . ""NewLayer1,0""))) """" ""_LA"" ""Expo_Building"" """")`)
-      - Expo_Markings (Move all TEXT/MTEXT residing on layer '0' or 'building text' or unknown layers to this layer using native LISP: e.g., `(command ""-LAYER"" ""Make"" ""Expo_Markings"" """")` then run `(command ""_.CHPROP"" (ssget ""_X"" '((0 . ""TEXT,MTEXT"") (8 . ""0,building text""))) """" ""_LA"" ""Expo_Markings"" """")`)
-      - Expo_Column (Use `NET:SELECT_COLUMNS:Expo_Column` tool)
-      - Expo_View2 (Use `NET:SELECT_UTILITIES:Expo_View2` tool)
-   E. Final Styling: Run `(c:a2zcolor)` to change the color of the above layers automatically.
-   F. Cleanup: First purge everything: `(command ""-PURGE"" ""All"" ""*"" ""N"")`. Then, you MUST forcefully delete the original source layers (e.g., 'outlines', 'boothNo', 'NewLayer1', 'building text') because they might contain hidden objects that prevent purging. Use: `(command ""-LAYDEL"" ""N"" ""outlines"" """" ""Y"")` and repeat for each vendor layer.
-7. LAYER DELETION RULE: If the user specifically asks to DELETE a layer, you MUST use the laydel command: `(command ""-LAYDEL"" ""N"" ""layername"" """" ""Y"")`.
-8. LAYER MAPPINGS: The user's explicit mappings are provided below. Prioritize assigning geometry to target layers according to these explicit mappings over dynamic surveyor layer logic if there is a conflict.
-
---- USER LAYER MAPPINGS ---
-{layerMappings}
---- END MAPPINGS ---
+   A. Prepare Geometry: You MUST execute exactly `NET:PREPARE_GEOMETRY` as the very first step. This C# native tool will automatically lock all Booth layers, run flatten on Splines, safely explode structures 3 times, and purge unexplodable junk.
+   B. Unlock All Layers: After geometry preparation, you MUST unlock all layers using `(command ""-LAYER"" ""UNLOCK"" ""*"" """")` BEFORE running any migrations!
+   C. Geometric Migration & Standardization:
+      - You MUST execute `NET:APPLY_LAYER_MAPPINGS`. This guarantees native moving of objects according to the user's dictionary.
+      - If dynamic geometric guessing is still required for missing entities, use `NET:SELECT_BOOTH_BOXES:Expo_BoothOutline`, `NET:SELECT_COLUMNS:Expo_Column`, and `NET:SELECT_UTILITIES:Expo_View2`.
+   D. Final Styling: ABSOLUTE REQUIREMENT - You MUST run `(c:a2zcolor)` to change the color and lineweight of the above layers automatically for the final PDF proof.
+   E. Cleanup: First purge everything: `(command ""-PURGE"" ""All"" ""*"" ""N"")`. Then, to safely retire leftover vendor layers without data loss, you MUST run exactly `NET:RENAME_DELETED_LAYERS`.
+   F. Final Locks: To protect the final booth structure, you MUST run exactly `NET:LOCK_BOOTH_LAYERS` as the absolute final step.
+7. LAYER DELETION RULE: If the user specifically asks to permanently delete a layer, you MUST use the laydel command.
 
 JSON Schema:
 {{

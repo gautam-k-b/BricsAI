@@ -1,0 +1,29 @@
+The drawing contains a variety of layers, some of which are specific to the exhibition context and others that pertain to building elements. The user's objective is to proof the drawing according to A2Z layering standards, which involves organizing layers into specific categories.
+
+**Current Drawing State:**
+- **Core Exhibition Layers:**
+  - `Expo_BoothNumber`
+  - `Expo_BoothOutline`
+  - `Expo_AisleDimension`
+  - `Expo_BoothLegend`
+  - `Expo_BoothDim`
+  - `Expo_BoothSize`
+  - `Expo_BoothName`
+
+- **Building and Secondary Elements:**
+  - Layers like `A-DOOR`, `S-COLS`, `Q-SPCQ`, `A-GENM`, `E-ELEC-FIXT`, `A-FLOR-HRAL`, `A-DETL`, `E-LITE-EQPM`, `A-DOOR-FRAM`, `A-DETL-MBND`, `A-DETL-GENF`, `bldg_fire`, `bldg_text`, `bldg_walls`, `t-airwalls`, `bldg_elec` are considered building elements.
+
+- **Annotation and Markings:**
+  - `show_title`, `G-ANNO-TEXT`, `bldg_text` are related to markings and annotations.
+
+**Required Migration Paths:**
+- **Core Booth Layers:** No migration needed as they are already correctly categorized under the `Expo_` prefix.
+  
+- **Building Elements:** 
+  - Migrate layers such as `A-DOOR`, `S-COLS`, `Q-SPCQ`, `A-GENM`, `A-FLOR-HRAL`, `A-DETL`, `E-LITE-EQPM`, `A-DOOR-FRAM`, `A-DETL-MBND`, `A-DETL-GENF`, `bldg_walls`, `t-airwalls` to `Expo_Building`.
+  - `bldg_fire` and `bldg_elec` should be moved to `Expo_View2`.
+
+- **Annotations and Markings:**
+  - Move `show_title`, `G-ANNO-TEXT`, and `bldg_text` to `Expo_Markings`.
+
+By following these migration paths, the drawing will be organized according to the A2Z layering standards, ensuring a clear distinction between core exhibition elements and secondary building components.
