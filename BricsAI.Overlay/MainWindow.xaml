@@ -218,7 +218,9 @@
                     <TextBox Text="{Binding InputText, UpdateSourceTrigger=PropertyChanged}" 
                              PreviewKeyDown="Input_PreviewKeyDown"
                              FontSize="14" CaretBrush="#00A8FF"
-                             Height="40" VerticalContentAlignment="Center" Background="#444" Foreground="White" BorderThickness="0" Padding="10,0"/>
+                             MinHeight="40" MaxHeight="120" AcceptsReturn="True" TextWrapping="Wrap" 
+                             VerticalScrollBarVisibility="Auto" ScrollViewer.CanContentScroll="True"
+                             VerticalContentAlignment="Center" Background="#444" Foreground="White" BorderThickness="0" Padding="10,10,10,10"/>
                     
                     <Button Grid.Column="1" Content="Send" Command="{Binding SendCommand}" IsEnabled="{Binding IsNotBusy}" Margin="10,0,0,0" Padding="10,5" Background="#00A8FF" Foreground="White" BorderThickness="0">
                         <Button.Resources>

@@ -11,7 +11,9 @@ namespace BricsAI.Plugins.V15Tools
         public string GetPromptExample()
         {
             return "User: 'Explode all the blocks'\n" +
-                   "Response: { \"tool_calls\": [{ \"command_name\": \"EXPLODE\", \"lisp_code\": \"(command \\\"_.EXPLODE\\\" (ssget \\\"_X\\\") \\\"\\\")\" }] }";
+                   "Response: { \"tool_calls\": [{ \"command_name\": \"EXPLODE\", \"lisp_code\": \"(command \\\"_.EXPLODE\\\" (ssget \\\"_X\\\") \\\"\\\")\" }] }\n\n" +
+                   "User: 'check for the type MTEXT in quick select and if available, explode it'\n" +
+                   "Response: { \"tool_calls\": [{ \"command_name\": \"QSELECT_EXPLODE\", \"lisp_code\": \"NET:QSELECT_EXPLODE:MTEXT\" }] }";
         }
     }
 }

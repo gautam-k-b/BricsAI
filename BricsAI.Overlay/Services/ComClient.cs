@@ -209,11 +209,15 @@ namespace BricsAI.Overlay.Services
                                 }
                                 else if (netCmd.StartsWith("NET:APPLY_LAYER_MAPPINGS")) results.Add($"Step {step++}: " + ApplyLayerMappings(_acadApp!.ActiveDocument));
                                 else if (netCmd.StartsWith("NET:RENAME_DELETED_LAYERS")) results.Add($"Step {step++}: " + RenameDeletedLayers(_acadApp!.ActiveDocument));
+                                else if (netCmd.StartsWith("NET:DELETE_LAYERS_BY_PREFIX:")) results.Add($"Step {step++}: " + DeleteLayersByPrefix(_acadApp!.ActiveDocument, ExtractTarget(netCmd)));
                                 else if (netCmd.StartsWith("NET:LOCK_BOOTH_LAYERS")) results.Add($"Step {step++}: " + LockBoothLayers(_acadApp!.ActiveDocument));
                                 else if (netCmd.StartsWith("NET:SELECT_BOOTH_BOXES")) results.Add($"Step {step++}: " + SelectGeometricFeatures(_acadApp!.ActiveDocument, "booths", ExtractTarget(netCmd)));
                                 else if (netCmd.StartsWith("NET:SELECT_BUILDING_LINES")) results.Add($"Step {step++}: " + SelectGeometricFeatures(_acadApp!.ActiveDocument, "building", ExtractTarget(netCmd)));
                                 else if (netCmd.StartsWith("NET:SELECT_COLUMNS")) results.Add($"Step {step++}: " + SelectGeometricFeatures(_acadApp!.ActiveDocument, "columns", ExtractTarget(netCmd)));
                                 else if (netCmd.StartsWith("NET:SELECT_UTILITIES")) results.Add($"Step {step++}: " + SelectGeometricFeatures(_acadApp!.ActiveDocument, "utilities", ExtractTarget(netCmd)));
+                                else if (netCmd.StartsWith("NET:PREPARE_GEOMETRY")) results.Add($"Step {step++}: " + PrepareGeometry(_acadApp!.ActiveDocument));
+                                else if (netCmd.StartsWith("NET:QSELECT_EXPLODE:")) results.Add($"Step {step++}: " + QSelectExplode(_acadApp!.ActiveDocument, ExtractTarget(netCmd)));
+                                else if (netCmd.StartsWith("NET:LEARN_LAYER_MAPPING:")) results.Add($"Step {step++}: " + LearnLayerMapping(netCmd.Substring("NET:LEARN_LAYER_MAPPING:".Length).Trim()));
                                 else results.Add($"Step {step++}: WARNING Unrecognized NET command: {netCmd}");
                             }
                             else if (!string.IsNullOrEmpty(lispCode) && _acadApp?.ActiveDocument != null)
@@ -271,11 +275,16 @@ namespace BricsAI.Overlay.Services
                         }
                         if (netCmdSingle.StartsWith("NET:APPLY_LAYER_MAPPINGS")) return ApplyLayerMappings(_acadApp!.ActiveDocument);
                         if (netCmdSingle.StartsWith("NET:RENAME_DELETED_LAYERS")) return RenameDeletedLayers(_acadApp!.ActiveDocument);
+                        if (netCmdSingle.StartsWith("NET:DELETE_LAYERS_BY_PREFIX:")) return DeleteLayersByPrefix(_acadApp!.ActiveDocument, ExtractTarget(netCmdSingle));
                         if (netCmdSingle.StartsWith("NET:LOCK_BOOTH_LAYERS")) return LockBoothLayers(_acadApp!.ActiveDocument);
+                        if (netCmdSingle.StartsWith("NET:SELECT_BOOTH_BOXES")) return SelectGeometricFeatures(_acadApp!.ActiveDocument, "booths", ExtractTarget(netCmdSingle));
                         if (netCmdSingle.StartsWith("NET:SELECT_BOOTH_BOXES")) return SelectGeometricFeatures(_acadApp!.ActiveDocument, "booths", ExtractTarget(netCmdSingle));
                         if (netCmdSingle.StartsWith("NET:SELECT_BUILDING_LINES")) return SelectGeometricFeatures(_acadApp!.ActiveDocument, "building", ExtractTarget(netCmdSingle));
                         if (netCmdSingle.StartsWith("NET:SELECT_COLUMNS")) return SelectGeometricFeatures(_acadApp!.ActiveDocument, "columns", ExtractTarget(netCmdSingle));
                         if (netCmdSingle.StartsWith("NET:SELECT_UTILITIES")) return SelectGeometricFeatures(_acadApp!.ActiveDocument, "utilities", ExtractTarget(netCmdSingle));
+                        if (netCmdSingle.StartsWith("NET:PREPARE_GEOMETRY")) return PrepareGeometry(_acadApp!.ActiveDocument);
+                        if (netCmdSingle.StartsWith("NET:QSELECT_EXPLODE:")) return QSelectExplode(_acadApp!.ActiveDocument, ExtractTarget(netCmdSingle));
+                        if (netCmdSingle.StartsWith("NET:LEARN_LAYER_MAPPING:")) return LearnLayerMapping(netCmdSingle.Substring("NET:LEARN_LAYER_MAPPING:".Length).Trim());
                         
                         return $"WARNING Unrecognized NET command: {netCmdSingle}";
                     }
@@ -641,11 +650,71 @@ namespace BricsAI.Overlay.Services
                         catch { }
                     }
                 }
-                return $"Renamed {renameCount} uncategorized layers to Deleted_ prefix.";
+                return $"Found and renamed {renameCount} non-standard layers with 'Deleted_' prefix.";
             }
             catch (Exception ex)
             {
                 return $"Error renaming layers: {ex.Message}";
+            }
+        }
+
+        private string DeleteLayersByPrefix(dynamic doc, string prefix)
+        {
+            try
+            {
+                var layers = doc?.Layers;
+                if (layers == null) return "Error: Could not access Layers.";
+
+                // 1. Switch active layer to 0 (cannot purge the current layer)
+                doc.SendCommand("(setvar \"CLAYER\" \"0\")\n");
+                int targetLayerCount = 0;
+                int unlockedCount = 0;
+                // 2. Aggressively strip all protections (Lock, Freeze, Off) natively via COM
+                for (int i = 0; i < layers.Count; i++)
+                {
+                    try
+                    {
+                        var layer = layers.Item(i);
+                        string name = layer.Name;
+
+                        if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                        {
+                            targetLayerCount++;
+                            layer.Lock = false;
+                            layer.Freeze = false;
+                            layer.LayerOn = true;
+                            unlockedCount++;
+                        }
+                    }
+                    catch { } // Ignore if a specific layer throws COM error
+                }
+
+                if (targetLayerCount == 0)
+                {
+                    return $"Found 0 layers starting with '{prefix}'. No deletion necessary.";
+                }
+                // 3. Command line ERASE with wildcard (now guaranteed to hit everything in active spaces)
+                doc.SendCommand($"(if (setq ss (ssget \"_X\" '((8 . \"{prefix}*\")))) (command \"_.ERASE\" ss \"\"))\n");
+
+                // 4. Ultra-Fast In-Process Visual LISP Block Traversal to vaporize nested entities
+                string vlisp = "(vl-load-com)(setq blks (vla-get-blocks (vla-get-activedocument (vlax-get-acad-object))))" +
+                               "(vlax-for blk blks (if (= (vla-get-isxref blk) :vlax-false) " +
+                               "(vlax-for ent blk (if (wcmatch (strcase (vla-get-layer ent)) (strcase \"" + prefix + "*\")) " +
+                               "(vl-catch-all-apply 'vla-delete (list ent))))))";
+                doc.SendCommand($"{vlisp}\n");
+
+                // 5. Purge Empty Block Definitions / Dependent Dictionaries (Requires 2 passes for nested orphans)
+                doc.SendCommand("(command \"-PURGE\" \"All\" \"*\" \"N\")\n");
+                doc.SendCommand("(command \"-PURGE\" \"All\" \"*\" \"N\")\n");
+
+                // 6. Purge the strictly targeted empty layers
+                doc.SendCommand($"(command \"-PURGE\" \"LA\" \"{prefix}*\" \"N\")\n");
+
+                return $"Unlocked {unlockedCount} '{prefix}' layers natively, erased active spaces, executed ultra-fast deep block vaporization, and double-purged.";
+            }
+            catch (Exception ex)
+            {
+                return $"Error deleting layers by prefix: {ex.Message}";
             }
         }
 
@@ -663,11 +732,57 @@ namespace BricsAI.Overlay.Services
             }
         }
 
+        private string QSelectExplode(dynamic doc, string? itemType = null)
+        {
+            if (string.IsNullOrEmpty(itemType)) return "Error: No item type specified.";
+            try
+            {
+                string filterType = itemType.ToUpper();
+                if (filterType == "ROTATED DIMENSION") filterType = "DIMENSION";
+                if (filterType == "BLOCK REFERENCE") filterType = "INSERT";
+                if (filterType == "MTEXT") filterType = "MTEXT";
+
+                doc.SendCommand("(setvar \"PICKFIRST\" 1)\n");
+
+                string ssetName = "BA_QSel_" + System.Guid.NewGuid().ToString("N").Substring(0, 10);
+                var sset = doc.SelectionSets.Add(ssetName);
+                try
+                {
+                    sset.Select(5, Type.Missing, Type.Missing, new short[] { 0 }, new object[] { filterType });
+                    if (sset.Count > 0)
+                    {
+                        doc.SendCommand("(setvar \"QAFLAGS\" 1)\n");
+                        doc.SendCommand($"(if (setq ss (ssget \"_X\" '((0 . \"{filterType}\")))) (sssetfirst nil ss))\n");
+                        doc.SendCommand("_.EXPLODE\n");
+                        doc.SendCommand("(setvar \"QAFLAGS\" 0)\n");
+                        return $"Quick Select: Found {sset.Count} '{itemType}' entities, highlighted them, and executed EXPLODE natively.";
+                    }
+                    else
+                    {
+                        return $"Quick Select check: No '{itemType}' entities found in the drawing.";
+                    }
+                }
+                finally
+                {
+                    try { sset.Delete(); } catch { }
+                }
+            }
+            catch (Exception ex)
+            {
+                return $"Error executing QSelect Explode: {ex.Message}";
+            }
+        }
 
         private string PrepareGeometry(dynamic doc)
         {
             try
             {
+                // 0. The ultimate safeguard: ALWAYS unlock every single layer in the entire drawing first.
+                // If the vendor locked their layers before sending the file, the native EXPLODE / ERASE commands 
+                // will completely ignore them even when highlighted! By opening the floodgates here, we guarantee
+                // all geometric primitives and nested vendor blocks are exposed to the whitelist iterator.
+                doc.SendCommand("(command \"-LAYER\" \"UNLOCK\" \"*\" \"\")\n");
+
                 // 1. Lock booth layers natively (targets)
                 try { doc.Layers.Item("Expo_BoothNumber").Lock = true; } catch { }
                 try { doc.Layers.Item("Expo_BoothOutline").Lock = true; } catch { }
@@ -695,44 +810,130 @@ namespace BricsAI.Overlay.Services
                 }
                 catch { }
 
-                // 2. Build the exact LISP macro logic mirroring the Quick Select > Explode workflow.
-                // We must use a dynamic file to ensure BricsCAD's interpreter enforces QAFLAGS 1 
-                // on associative entities (MTEXT, DIMENSION, HATCH) that COM C# methods fail on.
-                System.Text.StringBuilder lispMacro = new System.Text.StringBuilder();
-                lispMacro.AppendLine("(setvar \"QAFLAGS\" 1)");
-                
-                // 2a. Flatten splines
-                lispMacro.AppendLine("(if (setq ss (ssget \"_X\" '((0 . \"SPLINE\")))) (command \"_.FLATTEN\" ss \"\"))");
+                doc.SendCommand("(setvar \"PICKFIRST\" 1)\n");
 
-                // 2b. Explode specific complex Item Types linearly via LISP
-                lispMacro.AppendLine("(repeat 3");
-                lispMacro.AppendLine("  (if (setq ss (ssget \"_X\" '((0 . \"DIMENSION,HATCH,MTEXT,INSERT\"))))");
-                lispMacro.AppendLine("    (command \"_.EXPLODE\" ss \"\")");
-                lispMacro.AppendLine("  )");
-                lispMacro.AppendLine(")");
+                // 2a. Flatten splines precisely like human
+                try
+                {
+                    string sName = "BA_Spline_" + System.Guid.NewGuid().ToString("N").Substring(0, 10);
+                    var ssetSplines = doc.SelectionSets.Add(sName);
+                    ssetSplines.Select(5, Type.Missing, Type.Missing, new short[] { 0 }, new object[] { "SPLINE" });
+                    if (ssetSplines.Count > 0)
+                    {
+                        doc.SendCommand("(if (setq ss (ssget \"_X\" '((0 . \"SPLINE\")))) (sssetfirst nil ss))\n");
+                        doc.SendCommand("FLATTEN\n\n\n"); // Extra enter to clear any hidden lines dialogs
+                    }
+                    try { ssetSplines.Delete(); } catch { }
+                } catch { }
 
-                // 2c. Purge (erase) non-primitive unexplodable types. 
-                // We exclusively SPARE: Arc, Line, Circle, Ellipse, Polyline, Text, Solid, AND BlockReference (INSERT)
-                lispMacro.AppendLine("(if (setq ss (ssget \"_X\" '((-4 . \"<NOT\") (-4 . \"<OR\") (0 . \"ARC\") (0 . \"LINE\") (0 . \"CIRCLE\") (0 . \"ELLIPSE\") (0 . \"POLYLINE\") (0 . \"LWPOLYLINE\") (0 . \"TEXT\") (0 . \"SOLID\") (0 . \"INSERT\") (-4 . \"OR>\") (-4 . \"NOT>\"))))");
-                lispMacro.AppendLine("  (command \"_.ERASE\" ss \"\")");
-                lispMacro.AppendLine(")");
+                doc.SendCommand("(setvar \"QAFLAGS\" 1)\n");
 
-                // Restore variables
-                lispMacro.AppendLine("(setvar \"QAFLAGS\" 0)");
+                // 2b. Explode Explicit Complex Items (Just like QSelectExplode)
+                string[] explicitTypes = { "MTEXT", "HATCH", "DIMENSION", "INSERT" };
+                for (int pass = 0; pass < 3; pass++)
+                {
+                    bool hit = false;
+                    foreach (string type in explicitTypes)
+                    {
+                        try
+                        {
+                            string eName = "BA_Exp_" + System.Guid.NewGuid().ToString("N").Substring(0, 10);
+                            var ssetExp = doc.SelectionSets.Add(eName);
+                            ssetExp.Select(5, Type.Missing, Type.Missing, new short[] { 0 }, new object[] { type });
+                            if (ssetExp.Count > 0)
+                            {
+                                hit = true;
+                                doc.SendCommand($"(if (setq ss (ssget \"_X\" '((0 . \"{type}\")))) (sssetfirst nil ss))\n");
+                                doc.SendCommand("_.EXPLODE\n");
+                            }
+                            try { ssetExp.Delete(); } catch { }
+                        }
+                        catch { }
+                    }
+                    if (!hit) break; // Optimization
+                }
 
-                // Write sequence to dynamic string to evade 2048-char limits
-                string tempPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "_BricsAI_Prepare.lsp");
-                System.IO.File.WriteAllText(tempPath, lispMacro.ToString());
-                string lispPath = tempPath.Replace("\\", "/");
-                
-                // Execute script instantly
-                doc.SendCommand($"(load \"{lispPath}\")\n");
+                // User Whitelist: Arc, Line, Circle, Ellipse, Polyline, Text, Solid
+                string whitelistFilter = "'((-4 . \"<NOT\") (-4 . \"<OR\") (0 . \"ARC\") (0 . \"LINE\") (0 . \"CIRCLE\") (0 . \"ELLIPSE\") (0 . \"POLYLINE\") (0 . \"LWPOLYLINE\") (0 . \"TEXT\") (0 . \"SOLID\") (-4 . \"OR>\") (-4 . \"NOT>\"))";
+                short[] wType = new short[] { -4, -4, 0, 0, 0, 0, 0, 0, 0, 0, -4, -4 };
+                object[] wData = new object[] { "<NOT", "<OR", "ARC", "LINE", "CIRCLE", "ELLIPSE", "POLYLINE", "LWPOLYLINE", "TEXT", "SOLID", "OR>", "NOT>" };
 
-                return "Geometry Prepared: Locked booth layers, flattened splines, exploded compounds natively via LISP, and erased unresolvable structures.";
+                // 2c. Explode Universal Whitelist
+                for (int pass = 0; pass < 3; pass++)
+                {
+                    try
+                    {
+                        string eName = "BA_Uni_" + System.Guid.NewGuid().ToString("N").Substring(0, 10);
+                        var ssetUni = doc.SelectionSets.Add(eName);
+                        ssetUni.Select(5, Type.Missing, Type.Missing, wType, wData);
+                        if (ssetUni.Count > 0)
+                        {
+                            doc.SendCommand($"(if (setq ss (ssget \"_X\" {whitelistFilter})) (sssetfirst nil ss))\n");
+                            doc.SendCommand("_.EXPLODE\n");
+                        }
+                        else
+                        {
+                            try { ssetUni.Delete(); } catch { }
+                            break;
+                        }
+                        try { ssetUni.Delete(); } catch { }
+                    } catch { }
+                }
+
+                // 2d. ERASE unresolvable structures outside the whitelist
+                try
+                {
+                    string delName = "BA_Del_" + System.Guid.NewGuid().ToString("N").Substring(0, 10);
+                    var ssetDel = doc.SelectionSets.Add(delName);
+                    ssetDel.Select(5, Type.Missing, Type.Missing, wType, wData);
+                    if (ssetDel.Count > 0)
+                    {
+                        doc.SendCommand($"(if (setq ss (ssget \"_X\" {whitelistFilter})) (sssetfirst nil ss))\n");
+                        doc.SendCommand("_.ERASE\n");
+                    }
+                    try { ssetDel.Delete(); } catch { }
+                } catch { }
+
+                doc.SendCommand("(setvar \"QAFLAGS\" 0)\n");
+
+                return "Geometry Prepared: Locked booth layers, universally exploded explicit items and non-primitives 3 times, and erased unresolvable structures.";
             }
             catch (Exception ex)
             {
                 return $"Error preparing geometry: {ex.Message}";
+            }
+        }
+
+        private string LearnLayerMapping(string? targetStr)
+        {
+            if (string.IsNullOrEmpty(targetStr) || !targetStr.Contains(":")) return "Error: Must provide Source:Target layer formats.";
+            
+            try
+            {
+                var parts = targetStr.Split(':');
+                string sourceLayer = parts[0].Trim();
+                string targetLayer = parts[1].Trim();
+
+                string mappingPath = System.IO.Path.Combine(System.AppContext.BaseDirectory, "layer_mappings.json");
+                Dictionary<string, string> mappings;
+                if (System.IO.File.Exists(mappingPath))
+                {
+                    string json = System.IO.File.ReadAllText(mappingPath);
+                    mappings = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new Dictionary<string, string>();
+                }
+                else
+                {
+                    mappings = new Dictionary<string, string>();
+                }
+
+                mappings[sourceLayer] = targetLayer;
+                System.IO.File.WriteAllText(mappingPath, System.Text.Json.JsonSerializer.Serialize(mappings, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+                
+                return $"Successfully learned that '{sourceLayer}' maps to '{targetLayer}'. I have written this to my permanent memory bank (layer_mappings.json) and will automatically migrate it on all future CAD files.";
+            }
+            catch (Exception ex)
+            {
+                return $"Error learning layer mapping: {ex.Message}";
             }
         }
     }

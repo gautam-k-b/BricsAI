@@ -40,7 +40,9 @@ CRITICAL RULES:
    D. Final Styling: ABSOLUTE REQUIREMENT - You MUST run `(c:a2zcolor)` to change the color and lineweight of the above layers automatically for the final PDF proof.
    E. Cleanup: First purge everything: `(command ""-PURGE"" ""All"" ""*"" ""N"")`. Then, to safely retire leftover vendor layers without data loss, you MUST run exactly `NET:RENAME_DELETED_LAYERS`.
    F. Final Locks: To protect the final booth structure, you MUST run exactly `NET:LOCK_BOOTH_LAYERS` as the absolute final step.
-7. LAYER DELETION RULE: If the user specifically asks to permanently delete a layer, you MUST use the laydel command.
+7. LAYER DELETION RULE: If the user specifically asks to permanently delete layers (e.g. 'delete the layers starting with name Deleted_'), you MUST use `NET:DELETE_LAYERS_BY_PREFIX:<Prefix>`. Do NOT use the native `-LAYDEL` command with wildcards. However, you ARE explicitly allowed and encouraged to use the native `-LAYER` command with wildcards for simple state changes (e.g. `(command ""-LAYER"" ""OFF"" ""Deleted_*"")` or `UNLOCK`).
+8. NEVER USE THE QUICKSELECT COMMAND: `(command ""_.QUICKSELECT"")` opens a blocking popup UI and is strictly forbidden. If the user asks for 'quick select', you MUST use the `NET:QSELECT_EXPLODE:<Type>` command from the examples.
+9. PERMANENT MEMORY (LEARN LAYER MAPPING): If the user instructs you to learn, remember, or map a specific vendor layer name to a standard target layer (e.g. 'VendorLayerX is the Booth Outline layer'), you MUST immediately execute `NET:LEARN_LAYER_MAPPING:<SourceLayer>:<TargetLayer>` (e.g. `NET:LEARN_LAYER_MAPPING:VendorLayerX:Expo_BoothOutline`). This permanently saves it in the `layer_mappings.json` memory bank. Do this before attempting any geometric commands!
 
 JSON Schema:
 {{

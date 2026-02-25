@@ -185,7 +185,7 @@ namespace BricsAI.Overlay.ViewModels
 
             stopwatch.Stop();
             double seconds = Math.Round(stopwatch.Elapsed.TotalSeconds, 1);
-            Messages.Add(new ChatMessage { Role = "Assistant", Content = $"📊 Performance: {totalTokens} API tokens consumed. Proofing completed in {seconds} seconds." });
+            Messages.Add(new ChatMessage { Role = "Assistant", Content = $"📊 Performance: {totalTokens} API tokens consumed. Task completed in {seconds} seconds." });
 
             IsBusy = false;
         }

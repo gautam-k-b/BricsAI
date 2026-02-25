@@ -1,5 +1,18 @@
 # Release Notes - BricsAI
 
+## 🚀 v2.0.1 - The Deep Deletion Update
+
+This update introduces a bulletproof layer annihilation engine that bypasses BricsCAD Classic/Lite license restrictions by natively parsing and vaporizing nested entities from deep within the Block Dictionary.
+
+### 🔥 Ultra-Fast Deep Block Parser
+- **Visual LISP Dictionary Injection**: Replaced slow out-of-process C# loops with an injected `(vlax-for)` Visual LISP script, dropping nested block verification time from ~50,000ms to <50ms.
+- **Aggressive Un-Protection**: The AI now leverages COM to programmatically auto-strip all `Lock`, `Freeze`, and `Off` states from target layers prior to LISP erasure, removing all geometric defenses natively.
+- **Express Tools Bypass**: Safely eliminated all dependencies on the restricted `-LAYDEL` command in favor of a universal `_.ERASE` and multi-pass `-PURGE` execution workflow compatible with any BricsCAD license tier.
+
+### 🧠 AI Context Optimization
+- **Validation Context Logging**: The AI Validator now correctly recognizes graceful exits (e.g. `Found 0 matching layers. No deletion necessary.`), preventing false "Validation Failed" drops when iterating already-clean files.
+- **Layer Modality Unlocking**: Prompts explicitly mapped to teach the agent the difference between `-LAYDEL` (forbidden) and `-LAYER` standard wildcard use for Hiding/Freezing.
+
 ## 🌟 v2.0.0 - The Multi-Agent Orchestrator Update
 
 This massive update shifts BricsAI from a simple LLM command generator to a fully autonomous, multi-agent reasoning engine capable of executing complex 6-step proofing workflows with near-perfect reliability.

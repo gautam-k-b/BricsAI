@@ -72,6 +72,12 @@ namespace BricsAI.Overlay
         {
              if (e.Key == Key.Enter)
             {
+                if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
+                {
+                    // Allow the TextBox to handle the newline naturally
+                    return;
+                }
+
                 var vm = (ViewModels.MainViewModel)DataContext;
                 if (vm.SendCommand.CanExecute(null))
                 {

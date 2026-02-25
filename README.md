@@ -8,7 +8,7 @@ BricsAI is an advanced, AI-powered multi-agent desktop application designed to o
 
 The standalone BricsAI WPF Overlay floats near the BricsCAD instance, providing a rich, interactive Dashboard for rapid automation.
 
-![BricsAI Architecture Agent Interface](./docs/ui_mockup.png) <!-- Note: Save your provided UI image to ./docs/ui_mockup.png -->
+![BricsAI Architecture Agent Interface](https://kroki.io/mermaid/svg/eNp9ks9OwzAMxu88hbUDfw6DF4BJIStSpZVVdHSHaIestUqgjaskHUPqw5NmYyA2qJREcj9__tlJZWT7AovpGfjv2aK5FMO-uoLxeAI9r1XxZuHiqdPAOkeNdIr0BTzHvV8ikUovlS7p_Xormxpu12YCy_QBUoMWtQvqVfAOm-3WVSg4mpviBa0zQQELhWYUFAEjDsXzJPjnCt8TKnHvzolMqbR0ZFaHjDwJGRkTWWc2-EEGWOXrHykiJqItFr6TvxQ5E7msVSn_lsxmifArQ7NRBe6w5i1qFgNL4295xmB8vdMfYtGJWP4rhro8NbId-DCuc1gQ1fbX2PZ0nAtOjb84j75ji7VDQy0kUssKf4wtTURad5XSX38Ggz7Wr1g4Cy7UUNoRtIaa1tne4x-SOQ_U_RNaqjdo4TFa-NtpGqlLr0z_7eXeqMJyNvUPhQq0dvTT9u5u0vN5Ajcwi7N0OOQHGu95z8UhcUpF1wwtztcD7uqIK9r61zX0wcn3v3W9v48vpE-BKtde)
 
 ### UI Components & Functionality
 
