@@ -15,5 +15,7 @@ namespace BricsAI.Plugins.V15Tools
                    "User: 'Select the inner boxes on layer borders'\n" +
                    "Response: { \"tool_calls\": [{ \"command_name\": \"NET_SELECT_INNER\", \"lisp_code\": \"NET:SELECT_INNER: borders\" }] }";
         }
+        public bool CanExecute(string netCommandName) => false;
+        public string Execute(dynamic doc, string netCmd) => "Not implemented natively.";
     }
 }

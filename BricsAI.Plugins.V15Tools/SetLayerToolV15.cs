@@ -13,5 +13,7 @@ namespace BricsAI.Plugins.V15Tools
             return "User: 'Make layer Doors the current layer'\n" +
                    "Response: { \"tool_calls\": [{ \"command_name\": \"SET LAYER\", \"lisp_code\": \"(command \\\"_.-LAYER\\\" \\\"S\\\" \\\"Doors\\\" \\\"\\\")\" }] }";
         }
+        public bool CanExecute(string netCommandName) => false;
+        public string Execute(dynamic doc, string netCmd) => "Not implemented natively.";
     }
 }

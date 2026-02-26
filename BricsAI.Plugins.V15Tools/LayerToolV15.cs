@@ -13,5 +13,7 @@ namespace BricsAI.Plugins.V15Tools
             return "User: 'Open layer window'\n" +
                    "Response: { \"tool_calls\": [{ \"command_name\": \"EXPLORER\", \"lisp_code\": \"(command \\\"_.EXPLORER\\\" \\\"L\\\")\" }] }";
         }
+        public bool CanExecute(string netCommandName) => false;
+        public string Execute(dynamic doc, string netCmd) => "Not implemented natively.";
     }
 }

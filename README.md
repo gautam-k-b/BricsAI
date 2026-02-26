@@ -67,16 +67,23 @@ The automation pipeline relies on multiple distinct AI agents to maximize reliab
    - The application bypasses unreliable LISP `ssget` selections which risk "bleed-over" between commands.
    - Using the custom tool structure, the Executor Agent forces the C# host to natively create target layers implicitly and assign objects programmatically ($Area$ boundaries, $LWPOLYLINE$ closure checks, and direct `.Layer` assignments).
 
-2. **Entity Splitting / Safe Deletion:**
-   - Mixed-use layers (like Layer `0` having both geometry and Text) are explicitly handled by filtering entity definitions, ensuring walls map to `Expo_Building` while labels map to `Expo_Markings`.
+2. **Exhaustive Geometry Preparation Pipeline:**
+   - The `NET:PREPARE_GEOMETRY` tool forces a proactive 30-pass recursive mathematical blast over all objects in a drawing. It explicitly targets complex and 3D geometry (Dimensions, Hatches, Splines, Polyface Meshes) while protecting 2D primitive boundaries via a strict whitelist filter (`Arc`, `Line`, `Circle`, `Ellipse`, `LWPolyline`, `Solid`, `Text`).
+   - All legacy non-explodable entities are instantly swept and explicit vendor booth layers are automatically locked before the sequence begins to preserve geometric integrity.
 
-3. **Pluggable Capabilities:**
-   - Instead of monolithic updates to the AI's core capabilities, `BricsAI.Plugins` can be added dynamically and injected into the LLM context.
+3. **Defensive LISP Execution Runtime:**
+   - The Agent system prompt strictly forbids bare `ssget` queries, aggressively forcing the LLM to wrap all `(command)` executions in defensive `(if (setq ss (ssget...)))` LISP blocks to guarantee the BricsCAD COM engine never deadlocks or hangs waiting for mouse input on empty queries.
 
-4. **Configurable Layer Mappings:**
-   - To handle unpredictable layer naming conventions from external vendors, BricsAI reads a `layer_mappings.json` configuration file at runtime.
-   - This allows users to map unknown source layers directly to standard A2Z layers (e.g., mapping `"l1xxxx"` to `"Expo_BoothOutline"`) without altering any code.
-   - The Orchestrator automatically injects these mappings into the AI Agents' contexts, prompting them to prioritize explicit mappings over geometric guesswork.
+4. **Pluggable Capabilities Architecture:**
+   - Instead of monolithic updates to the AI's core capabilities, tools are implemented via the `IToolPlugin` interface (e.g. `LayerToolsPlugin.cs` and `GeometryToolsPlugin.cs`).
+   - The `PluginManager` dynamically reads the user's active BricsCAD version (V15 vs V19) via COM reflection and loads the correct compiled .NET DLL execution binary on the fly.
+
+5. **Live Chat Telemetry Stream:**
+   - Instead of locking the WPF interface while the background Agent script runs, BricsAI utilizes an `IProgress<string>` asynchronous callback stream. Users can watch the AI's step-by-step progress, LISP errors, and `NET:MESSAGE:` returns populate directly in the active chat bubble line-by-line in real time.
+
+6. **Persistent Configurable Layer Mappings:**
+   - To handle unpredictable layer naming conventions from external vendors, BricsAI reads a `layer_mappings.json` configuration file dynamically at runtime.
+   - The Surveyor and Executor agents natively prioritize these explicit mappings (e.g., mapping `"l1xxxx"` to `"Expo_BoothOutline"`) over geometric guesswork for precision reliability.
 
 ![Diagram](https://kroki.io/mermaid/svg/eNpLy8kvT85ILCpRCHHhUgCC0OLUIo3oD_MnrnjU0Pth_qTdYJFYTQVdXbsa15TMkuIaBa9gf7_onMTK1KL43MSCgsy89GK9rOL8vFiwCSBZsGqf_MSU1BSFpMoahVDPaLBZ4QFuCv5FyRmpxSVFiSX5RRAdoZ5g9Z55WanJJcUKzvl5JakVJTUKwaVFZamV-UVAvVN64TwFx_TUvBL8Ol0rUpNLgeZHP5o18_2OfjgfWS_cPF09oBEBRZn5RZklmVWpxQq-UE8hzAFrgBsCDgowB6jYJbMIaLeCc2Ix0F6noszkYmdHl2gNGEvBBxROxZoQO8FEcUllTiokmNIyc3KslNMs04zSTHSAYZKfnWqlnGxuZGqSCgDh65BX)
 

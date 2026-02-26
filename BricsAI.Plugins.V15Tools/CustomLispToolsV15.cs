@@ -17,5 +17,7 @@ namespace BricsAI.Plugins.V15Tools
                    "User: 'Select entities on a layer'\n" +
                    "Response: { \"tool_calls\": [{ \"command_name\": \"SELLAY\", \"lisp_code\": \"(c:sellay)\" }] }";
         }
+        public bool CanExecute(string netCommandName) => false;
+        public string Execute(dynamic doc, string netCmd) => "Not implemented natively.";
     }
 }

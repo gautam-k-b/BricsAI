@@ -113,7 +113,7 @@ namespace BricsAI.Overlay.Services.Agents
             if (string.IsNullOrWhiteSpace(_apiKey) || _apiKey == "YOUR_API_KEY_HERE")
             {
                 return (expectJson 
-                    ? $@"{{ ""tool_calls"": [{{ ""command_name"": ""ALERT"", ""lisp_code"": ""(alert \""Please configure your OpenAI API Key.\"")"" }}] }}"
+                    ? $@"{{ ""tool_calls"": [{{ ""command_name"": ""NET:MESSAGE: Please configure your OpenAI API Key."", ""lisp_code"": """" }}] }}"
                     : "Error: Please configure your OpenAI API Key.", 0);
             }
 
@@ -158,9 +158,10 @@ namespace BricsAI.Overlay.Services.Agents
             }
             catch (Exception ex)
             {
+                string safeMsg = ex.Message.Replace("\"", "'").Replace("\\", "/");
                 return (expectJson 
-                    ? $@"{{ ""tool_calls"": [{{ ""command_name"": ""ALERT"", ""lisp_code"": ""(alert \""Agent {Name} Error: {ex.Message}\"")"" }}] }}"
-                    : $"Agent {Name} Error: {ex.Message}", 0);
+                    ? $@"{{ ""tool_calls"": [{{ ""command_name"": ""NET:MESSAGE: Agent {Name} Error: {safeMsg}"", ""lisp_code"": """" }}] }}"
+                    : $"Agent {Name} Error: {safeMsg}", 0);
             }
         }
     }

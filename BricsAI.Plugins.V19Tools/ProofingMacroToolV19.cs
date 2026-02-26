@@ -26,5 +26,7 @@ namespace BricsAI.Plugins.V19Tools
                    "  ]\n" +
                    "}";
         }
+        public bool CanExecute(string netCommandName) => false;
+        public string Execute(dynamic doc, string netCmd) => "Not implemented natively.";
     }
 }

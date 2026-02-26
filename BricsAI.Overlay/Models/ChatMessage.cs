@@ -7,8 +7,23 @@ namespace BricsAI.Overlay.Models
     {
         private bool _isThinking;
 
+        private string _content = string.Empty;
+
         public string Role { get; set; } = string.Empty; // "User" or "Assistant"
-        public string Content { get; set; } = string.Empty;
+        
+        public string Content
+        {
+            get => _content;
+            set
+            {
+                if (_content != value)
+                {
+                    _content = value;
+                    OnPropertyChanged();
+                }
+            }
+        }
+        
         public bool IsUser => Role == "User";
         public string DisplayName => IsUser ? "User:" : "BricsAI:";
 

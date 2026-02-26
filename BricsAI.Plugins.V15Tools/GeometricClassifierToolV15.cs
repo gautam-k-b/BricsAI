@@ -19,5 +19,7 @@ namespace BricsAI.Plugins.V15Tools
                    "User: 'Find utilities'\n" +
                    "Response: { \"tool_calls\": [{ \"command_name\": \"NET_SELECT_UTILITIES\", \"lisp_code\": \"NET:SELECT_UTILITIES\" }] }";
         }
+        public bool CanExecute(string netCommandName) => false;
+        public string Execute(dynamic doc, string netCmd) => "Not implemented natively.";
     }
 }

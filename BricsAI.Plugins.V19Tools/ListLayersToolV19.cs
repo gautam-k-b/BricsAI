@@ -13,5 +13,7 @@ namespace BricsAI.Plugins.V19Tools
             return "User: 'Give me a list of all layer names'\n" +
                    "Response: { \"tool_calls\": [{ \"command_name\": \"LIST LAYERS\", \"lisp_code\": \"(command \\\"_.-LAYER\\\" \\\"?\\\")\" }] }";
         }
+        public bool CanExecute(string netCommandName) => false;
+        public string Execute(dynamic doc, string netCmd) => "Not implemented natively.";
     }
 }

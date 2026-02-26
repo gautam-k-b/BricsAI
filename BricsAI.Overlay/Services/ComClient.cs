@@ -2,12 +2,14 @@ using System;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Collections.Generic;
+using System.Text.Json;
 
 namespace BricsAI.Overlay.Services
 {
     public class ComClient
     {
         private dynamic? _acadApp;
+        private readonly PluginManager _pluginManager = new PluginManager();
 
         public bool IsConnected => _acadApp != null;
 
@@ -56,28 +58,16 @@ namespace BricsAI.Overlay.Services
                     }
                 }
 
-                if (command.StartsWith("NET:SELECT_LAYER:"))
+                if (command.StartsWith("NET:"))
                 {
-                    string layerName = command.Substring("NET:SELECT_LAYER:".Length).Trim();
-                    return SelectObjectsOnLayer(_acadApp!.ActiveDocument, layerName, false);
+                    var plugin = _pluginManager.GetPluginForCommand(command, MajorVersion);
+                    if (plugin != null)
+                    {
+                        return plugin.Execute(_acadApp.ActiveDocument, command);
+                    }
+                    return $"WARNING Unrecognized or Unsupported NET command: {command}";
                 }
                 
-                if (command.StartsWith("NET:SELECT_OUTER:"))
-                {
-                    string layerName = command.Substring("NET:SELECT_OUTER:".Length).Trim();
-                    return SelectObjectsOnLayer(_acadApp!.ActiveDocument, layerName, false, "outer");
-                }
-                if (command.StartsWith("NET:SELECT_INNER:"))
-                {
-                    string layerName = command.Substring("NET:SELECT_INNER:".Length).Trim();
-                    return SelectObjectsOnLayer(_acadApp!.ActiveDocument, layerName, false, "inner");
-                }
-                
-                if (command.StartsWith("NET:SELECT_BOOTH_BOXES")) return SelectGeometricFeatures(_acadApp!.ActiveDocument, "booths");
-                if (command.StartsWith("NET:SELECT_BUILDING_LINES")) return SelectGeometricFeatures(_acadApp!.ActiveDocument, "building");
-                if (command.StartsWith("NET:SELECT_COLUMNS")) return SelectGeometricFeatures(_acadApp!.ActiveDocument, "columns");
-                if (command.StartsWith("NET:SELECT_UTILITIES")) return SelectGeometricFeatures(_acadApp!.ActiveDocument, "utilities");
-
                 // Standard LISP command
                 object? ignore = _acadApp!.ActiveDocument.SendCommand(command + "\n");
                 return "Command sent.";
@@ -104,6 +94,7 @@ namespace BricsAI.Overlay.Services
                     if (_acadApp != null)
                     {
                         DetectVersion();
+                        _pluginManager.LoadPlugins();
                         return true;
                     }
 
@@ -112,6 +103,7 @@ namespace BricsAI.Overlay.Services
                     if (_acadApp != null)
                     {
                         DetectVersion();
+                        _pluginManager.LoadPlugins();
                         return true;
                     }
 
@@ -129,9 +121,22 @@ namespace BricsAI.Overlay.Services
             try
             {
                 string? versionStr = _acadApp?.Version;
-                if (versionStr != null && double.TryParse(versionStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double v))
+                if (versionStr != null)
                 {
-                    MajorVersion = (int)v;
+                    // Extract just the leading digits (e.g., "24.1s (x64)" -> "24")
+                    var match = System.Text.RegularExpressions.Regex.Match(versionStr, @"^\d+");
+                    if (match.Success && int.TryParse(match.Value, out int v))
+                    {
+                        MajorVersion = v;
+                    }
+                    else
+                    {
+                        MajorVersion = 19;
+                    }
+                }
+                else
+                {
+                    MajorVersion = 19;
                 }
             }
             catch
@@ -140,11 +145,13 @@ namespace BricsAI.Overlay.Services
             }
         }
 
-        public async Task<string> ExecuteActionAsync(string actionJson)
+        public async Task<string> ExecuteActionAsync(string actionJson, System.IProgress<string>? progress = null)
         {
             if (_acadApp == null && !await ConnectAsync())
             {
-                return "Error: Could not connect to BricsCAD.";
+                string err = "Error: Could not connect to BricsCAD.";
+                progress?.Report($"❌ {err}");
+                return err;
             }
 
             try
@@ -153,12 +160,12 @@ namespace BricsAI.Overlay.Services
                 // Assuming format: {"command": "LAYERSPANELOPEN", "lisp_code": "..."}
                 // or the user's schema: command_name, lisp_code, target_version
                 
-                using (var doc = System.Text.Json.JsonDocument.Parse(actionJson))
+                using (var doc = JsonDocument.Parse(actionJson))
                 {
                     var root = doc.RootElement;
                     
                     // Check for "tool_calls" array
-                    if (root.TryGetProperty("tool_calls", out var tools) && tools.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    if (root.TryGetProperty("tool_calls", out var tools) && tools.ValueKind == JsonValueKind.Array)
                     {
                         var results = new List<string>();
                         int step = 1;
@@ -176,66 +183,57 @@ namespace BricsAI.Overlay.Services
 
                             if (!string.IsNullOrEmpty(netCmd) && _acadApp?.ActiveDocument != null)
                             {
-                                if (netCmd.StartsWith("NET:SELECT_LAYER:"))
-                                {
-                                    string arg = netCmd.Substring("NET:SELECT_LAYER:".Length).Trim();
-                                    var layerParts = arg.Split(':');
-                                    string layerName = layerParts[0].Trim();
-                                    string? targetLayer = layerParts.Length > 1 ? layerParts[1].Trim() : null;
-                                    string res = SelectObjectsOnLayer(_acadApp!.ActiveDocument, layerName, false, "all", targetLayer);
-                                    results.Add($"Step {step++}: {res}");
-                                }
-                                else if (netCmd.StartsWith("NET:SELECT_OUTER:"))
-                                {
-                                    string layerName = netCmd.Substring("NET:SELECT_OUTER:".Length).Trim();
-                                    string res = SelectObjectsOnLayer(_acadApp!.ActiveDocument, layerName, false, "outer");
-                                    results.Add($"Step {step++}: {res}");
-                                }
-                                else if (netCmd.StartsWith("NET:SELECT_INNER:"))
-                                {
-                                    string layerName = netCmd.Substring("NET:SELECT_INNER:".Length).Trim();
-                                    string res = SelectObjectsOnLayer(_acadApp!.ActiveDocument, layerName, false, "inner");
-                                    results.Add($"Step {step++}: {res}");
-                                }
-                                else if (netCmd.StartsWith("NET:MESSAGE:"))
+                                if (netCmd.StartsWith("NET:MESSAGE:"))
                                 {
                                     string msg = netCmd.Substring("NET:MESSAGE:".Length).Trim();
-                                    results.Add($"MESSAGE: {msg}");
+                                    string ret = $"MESSAGE: {msg}";
+                                    results.Add(ret);
+                                    progress?.Report($"💬 {msg}");
                                 }
-                                else if (netCmd.StartsWith("NET:GET_LAYERS:"))
+                                else
                                 {
-                                    string res = GetAllLayers(_acadApp!.ActiveDocument);
-                                    results.Add($"Step {step++}: {res}");
+                                    var plugin = _pluginManager.GetPluginForCommand(netCmd, MajorVersion);
+                                    if (plugin != null)
+                                    {
+                                        progress?.Report($"🛠️ [{step}/{tools.GetArrayLength()}] Executing {plugin.Name}...");
+                                        string executeResult = plugin.Execute(_acadApp.ActiveDocument, netCmd);
+                                        string logEntry = $"Step {step}: {executeResult}";
+                                        results.Add(logEntry);
+                                        progress?.Report($"✅ {executeResult}\n");
+                                        step++;
+                                    }
+                                    else
+                                    {
+                                        string err = $"Step {step++}: WARNING Unrecognized or Unsupported NET command: {netCmd}";
+                                        results.Add(err);
+                                        progress?.Report($"⚠️ Unsupported Tool: {netCmd}\n");
+                                    }
                                 }
-                                else if (netCmd.StartsWith("NET:APPLY_LAYER_MAPPINGS")) results.Add($"Step {step++}: " + ApplyLayerMappings(_acadApp!.ActiveDocument));
-                                else if (netCmd.StartsWith("NET:RENAME_DELETED_LAYERS")) results.Add($"Step {step++}: " + RenameDeletedLayers(_acadApp!.ActiveDocument));
-                                else if (netCmd.StartsWith("NET:DELETE_LAYERS_BY_PREFIX:")) results.Add($"Step {step++}: " + DeleteLayersByPrefix(_acadApp!.ActiveDocument, ExtractTarget(netCmd)));
-                                else if (netCmd.StartsWith("NET:LOCK_BOOTH_LAYERS")) results.Add($"Step {step++}: " + LockBoothLayers(_acadApp!.ActiveDocument));
-                                else if (netCmd.StartsWith("NET:SELECT_BOOTH_BOXES")) results.Add($"Step {step++}: " + SelectGeometricFeatures(_acadApp!.ActiveDocument, "booths", ExtractTarget(netCmd)));
-                                else if (netCmd.StartsWith("NET:SELECT_BUILDING_LINES")) results.Add($"Step {step++}: " + SelectGeometricFeatures(_acadApp!.ActiveDocument, "building", ExtractTarget(netCmd)));
-                                else if (netCmd.StartsWith("NET:SELECT_COLUMNS")) results.Add($"Step {step++}: " + SelectGeometricFeatures(_acadApp!.ActiveDocument, "columns", ExtractTarget(netCmd)));
-                                else if (netCmd.StartsWith("NET:SELECT_UTILITIES")) results.Add($"Step {step++}: " + SelectGeometricFeatures(_acadApp!.ActiveDocument, "utilities", ExtractTarget(netCmd)));
-                                else if (netCmd.StartsWith("NET:PREPARE_GEOMETRY")) results.Add($"Step {step++}: " + PrepareGeometry(_acadApp!.ActiveDocument));
-                                else if (netCmd.StartsWith("NET:QSELECT_EXPLODE:")) results.Add($"Step {step++}: " + QSelectExplode(_acadApp!.ActiveDocument, ExtractTarget(netCmd)));
-                                else if (netCmd.StartsWith("NET:LEARN_LAYER_MAPPING:")) results.Add($"Step {step++}: " + LearnLayerMapping(netCmd.Substring("NET:LEARN_LAYER_MAPPING:".Length).Trim()));
-                                else results.Add($"Step {step++}: WARNING Unrecognized NET command: {netCmd}");
                             }
                             else if (!string.IsNullOrEmpty(lispCode) && _acadApp?.ActiveDocument != null)
                             {
+                                progress?.Report($"🛠️ [{step}/{tools.GetArrayLength()}] Sending Native Command...");
                                 object? ignore = _acadApp!.ActiveDocument.SendCommand(lispCode + "\n");
-                                results.Add($"Step {step++}: Executed LISP [{lispCode}]");
+                                string res = $"Step {step++}: Executed LISP [{lispCode}]";
+                                results.Add(res);
+                                progress?.Report($"✅ Completed Native String\n");
                             }
                             else if (!string.IsNullOrEmpty(commandName) && _acadApp?.ActiveDocument != null)
                             {
+                                progress?.Report($"🛠️ [{step}/{tools.GetArrayLength()}] Sending Command {commandName}...");
                                 object? ignore = _acadApp!.ActiveDocument.SendCommand(commandName + "\n");
-                                results.Add($"Step {step++}: Executed {commandName}");
+                                string res = $"Step {step++}: Executed {commandName}";
+                                results.Add(res);
+                                progress?.Report($"✅ Completed {commandName}\n");
                             }
                         }
-                        return string.Join("\n", results);
+                        
+                        string finalResult = string.Join("\n", results);
+                        return finalResult;
                     }
                     
                     // Fallback for direct object (legacy/single tool)
-                    System.Text.Json.JsonElement singleTool = root;
+                    JsonElement singleTool = root;
                     string? sLisp = singleTool.TryGetProperty("lisp_code", out var sl) ? sl.GetString() : null;
                     string? sCmd = singleTool.TryGetProperty("command_name", out var sc) ? sc.GetString() : null;
 
@@ -247,55 +245,37 @@ namespace BricsAI.Overlay.Services
 
                     if (!string.IsNullOrEmpty(netCmdSingle) && _acadApp?.ActiveDocument != null)
                     {
-                        if (netCmdSingle.StartsWith("NET:SELECT_LAYER:"))
-                        {
-                            string arg = netCmdSingle.Substring("NET:SELECT_LAYER:".Length).Trim();
-                            var layerParts = arg.Split(':');
-                            string layerName = layerParts[0].Trim();
-                            string? targetLayer = layerParts.Length > 1 ? layerParts[1].Trim() : null;
-                            return SelectObjectsOnLayer(_acadApp!.ActiveDocument, layerName, false, "all", targetLayer);
-                        }
-                        if (netCmdSingle.StartsWith("NET:SELECT_OUTER:"))
-                        {
-                            string layerName = netCmdSingle.Substring("NET:SELECT_OUTER:".Length).Trim();
-                            return SelectObjectsOnLayer(_acadApp!.ActiveDocument, layerName, false, "outer");
-                        }
-                        if (netCmdSingle.StartsWith("NET:SELECT_INNER:"))
-                        {
-                            string layerName = netCmdSingle.Substring("NET:SELECT_INNER:".Length).Trim();
-                            return SelectObjectsOnLayer(_acadApp!.ActiveDocument, layerName, false, "inner");
-                        }
                         if (netCmdSingle.StartsWith("NET:MESSAGE:"))
                         {
-                            return netCmdSingle.Substring("NET:MESSAGE:".Length).Trim();
+                            string msg = netCmdSingle.Substring("NET:MESSAGE:".Length).Trim();
+                            progress?.Report($"💬 {msg}");
+                            return msg;
                         }
-                        if (netCmdSingle.StartsWith("NET:GET_LAYERS:"))
+
+                        var plugin = _pluginManager.GetPluginForCommand(netCmdSingle, MajorVersion);
+                        if (plugin != null)
                         {
-                            return GetAllLayers(_acadApp!.ActiveDocument);
+                            progress?.Report($"🛠️ Executing {plugin.Name}...");
+                            string executeResult = plugin.Execute(_acadApp.ActiveDocument, netCmdSingle);
+                            progress?.Report($"✅ {executeResult}\n");
+                            return executeResult;
                         }
-                        if (netCmdSingle.StartsWith("NET:APPLY_LAYER_MAPPINGS")) return ApplyLayerMappings(_acadApp!.ActiveDocument);
-                        if (netCmdSingle.StartsWith("NET:RENAME_DELETED_LAYERS")) return RenameDeletedLayers(_acadApp!.ActiveDocument);
-                        if (netCmdSingle.StartsWith("NET:DELETE_LAYERS_BY_PREFIX:")) return DeleteLayersByPrefix(_acadApp!.ActiveDocument, ExtractTarget(netCmdSingle));
-                        if (netCmdSingle.StartsWith("NET:LOCK_BOOTH_LAYERS")) return LockBoothLayers(_acadApp!.ActiveDocument);
-                        if (netCmdSingle.StartsWith("NET:SELECT_BOOTH_BOXES")) return SelectGeometricFeatures(_acadApp!.ActiveDocument, "booths", ExtractTarget(netCmdSingle));
-                        if (netCmdSingle.StartsWith("NET:SELECT_BOOTH_BOXES")) return SelectGeometricFeatures(_acadApp!.ActiveDocument, "booths", ExtractTarget(netCmdSingle));
-                        if (netCmdSingle.StartsWith("NET:SELECT_BUILDING_LINES")) return SelectGeometricFeatures(_acadApp!.ActiveDocument, "building", ExtractTarget(netCmdSingle));
-                        if (netCmdSingle.StartsWith("NET:SELECT_COLUMNS")) return SelectGeometricFeatures(_acadApp!.ActiveDocument, "columns", ExtractTarget(netCmdSingle));
-                        if (netCmdSingle.StartsWith("NET:SELECT_UTILITIES")) return SelectGeometricFeatures(_acadApp!.ActiveDocument, "utilities", ExtractTarget(netCmdSingle));
-                        if (netCmdSingle.StartsWith("NET:PREPARE_GEOMETRY")) return PrepareGeometry(_acadApp!.ActiveDocument);
-                        if (netCmdSingle.StartsWith("NET:QSELECT_EXPLODE:")) return QSelectExplode(_acadApp!.ActiveDocument, ExtractTarget(netCmdSingle));
-                        if (netCmdSingle.StartsWith("NET:LEARN_LAYER_MAPPING:")) return LearnLayerMapping(netCmdSingle.Substring("NET:LEARN_LAYER_MAPPING:".Length).Trim());
                         
-                        return $"WARNING Unrecognized NET command: {netCmdSingle}";
+                        progress?.Report($"⚠️ Unsupported Tool: {netCmdSingle}\n");
+                        return $"WARNING Unrecognized or Unsupported NET command: {netCmdSingle}";
                     }
                     else if (!string.IsNullOrEmpty(sLisp) && _acadApp?.ActiveDocument != null)
                     {
+                        progress?.Report($"🛠️ Sending Native Command...");
                         object? ignore = _acadApp!.ActiveDocument.SendCommand(sLisp + "\n");
+                        progress?.Report($"✅ Completed Native String\n");
                         return $"Executed: {sLisp}";
                     }
                     else if (!string.IsNullOrEmpty(sCmd) && _acadApp?.ActiveDocument != null)
                     {
+                         progress?.Report($"🛠️ Sending Command {sCmd}...");
                          object? ignore = _acadApp!.ActiveDocument.SendCommand(sCmd + "\n");
+                         progress?.Report($"✅ Completed {sCmd}\n");
                          return $"Executed Command: {sCmd}";
                     }
                 }
@@ -307,634 +287,5 @@ namespace BricsAI.Overlay.Services
             }
         }
 
-        private string GetAllLayers(dynamic doc)
-        {
-            try
-            {
-                var layers = doc?.Layers;
-                if (layers == null) return "Error: Could not access Layers.";
-                
-                var layerNames = new List<string>();
-                for (int i = 0; i < layers.Count; i++)
-                {
-                    layerNames.Add((string)layers.Item(i).Name);
-                }
-                
-                return $"Layers found: {string.Join(", ", layerNames)}";
-            }
-            catch (Exception ex)
-            {
-                return $"Error getting layers: {ex.Message}";
-            }
-        }
-
-        private string? ExtractTarget(string cmd)
-        {
-            var parts = cmd.Split(':');
-            return parts.Length > 2 && !string.IsNullOrWhiteSpace(parts[2]) ? parts[2].Trim() : null;
-        }
-
-        private string SelectGeometricFeatures(dynamic doc, string featureType, string? targetLayer = null)
-        {
-            try
-            {
-                if (!string.IsNullOrEmpty(targetLayer)) { try { doc!.Layers.Add(targetLayer); } catch { } }
-                var selectionSets = doc?.SelectionSets;
-                if (selectionSets == null) return "Error: Could not access SelectionSets.";
-                dynamic? sset = null;
-                try { sset = selectionSets.Item("BricsAI_GeoSel"); sset.Delete(); } catch { }
-                sset = selectionSets.Add("BricsAI_GeoSel");
-
-                if (featureType == "booths")
-                {
-                    short[] filterTypes = new short[] { 0 }; 
-                    object[] filterData = new object[] { "LWPOLYLINE,POLYLINE" };
-                    sset.Select(5, Type.Missing, Type.Missing, filterTypes, filterData);
-                    
-                    var validObjs = new List<dynamic>();
-                    for (int i = 0; i < sset.Count; i++)
-                    {
-                        var obj = sset.Item(i);
-                        try
-                        {
-                            if (obj.Closed)
-                            {
-                                double area = obj.Area;
-                                if (area >= 90 && area <= 150)
-                                {
-                                    validObjs.Add(obj);
-                                    if (!string.IsNullOrEmpty(targetLayer)) { try { obj.Layer = targetLayer; } catch { } }
-                                    else { obj.Highlight(true); }
-                                }
-                            }
-                        }
-                        catch { }
-                    }
-                    if (validObjs.Count > 0)
-                    {
-                        try { doc!.SendCommand("PICKFIRST 1\n"); } catch { }
-                        return $"Selected {validObjs.Count} booth boxes.";
-                    }
-                    return "No booth boxes found.";
-                }
-                else if (featureType == "building")
-                {
-                    short[] filterTypes = new short[] { 0 }; 
-                    object[] filterData = new object[] { "LWPOLYLINE,POLYLINE,LINE" };
-                    sset.Select(5, Type.Missing, Type.Missing, filterTypes, filterData);
-
-                    double maxArea = -1;
-                    dynamic? largestObj = null;
-
-                    for (int i = 0; i < sset.Count; i++)
-                    {
-                        var obj = sset.Item(i);
-                        try
-                        {
-                            obj.GetBoundingBox(out object minPt, out object maxPt);
-                            double[] min = (double[])minPt;
-                            double[] max = (double[])maxPt;
-                            double width = Math.Abs(max[0] - min[0]);
-                            double height = Math.Abs(max[1] - min[1]);
-                            double area = width * height;
-
-                            if (area > maxArea)
-                            {
-                                maxArea = area;
-                                largestObj = obj;
-                            }
-                        }
-                        catch { }
-                    }
-
-                    if (largestObj != null)
-                    {
-                        if (!string.IsNullOrEmpty(targetLayer)) { try { largestObj.Layer = targetLayer; } catch { } }
-                        else { largestObj.Highlight(true); }
-                        return $"Selected outer building outline." + (!string.IsNullOrEmpty(targetLayer) ? $" -> Moved to {targetLayer}" : "");
-                    }
-                    return "No building outline found.";
-                }
-                else if (featureType == "columns")
-                {
-                    short[] filterTypes = new short[] { 0 }; 
-                    object[] filterData = new object[] { "CIRCLE,INSERT" };
-                    sset.Select(5, Type.Missing, Type.Missing, filterTypes, filterData);
-                    
-                    var validObjs = new List<dynamic>();
-                    for (int i = 0; i < sset.Count; i++)
-                    {
-                        var obj = sset.Item(i);
-                        try
-                        {
-                            obj.GetBoundingBox(out object minPt, out object maxPt);
-                            double[] min = (double[])minPt;
-                            double[] max = (double[])maxPt;
-                            double width = Math.Abs(max[0] - min[0]);
-                            double height = Math.Abs(max[1] - min[1]);
-                            double area = width * height;
-                            
-                            if (area > 0 && area < 50) 
-                            {
-                                validObjs.Add(obj);
-                                if (!string.IsNullOrEmpty(targetLayer)) { try { obj.Layer = targetLayer; } catch { } }
-                                else { obj.Highlight(true); }
-                            }
-                        }
-                        catch { }
-                    }
-
-                    if (validObjs.Count > 0)
-                    {
-                        return $"Selected {validObjs.Count} columns.";
-                    }
-                    return "No columns found.";
-                }
-                else if (featureType == "utilities")
-                {
-                    short[] filterTypes = new short[] { 0 }; 
-                    object[] filterData = new object[] { "HATCH" }; 
-                    sset.Select(5, Type.Missing, Type.Missing, filterTypes, filterData);
-                    
-                    int count = 0;
-                    for (int i = 0; i < sset.Count; i++)
-                    {
-                        var obj = sset.Item(i);
-                        if (!string.IsNullOrEmpty(targetLayer)) { try { obj.Layer = targetLayer; } catch { } }
-                        else { obj.Highlight(true); }
-                        count++;
-                    }
-                    
-                    if (count > 0)
-                    {
-                        return $"Selected {count} utility hatches/symbols.";
-                    }
-                    return "No utilities found.";
-                }
-
-                return "Unknown geometric feature type.";
-            }
-            catch (Exception ex)
-            {
-                return $"Error selecting geometric features: {ex.Message}";
-            }
-        }
-
-        private string SelectObjectsOnLayer(dynamic doc, string layerName, bool exclusive = false, string mode = "all", string? targetLayer = null)
-        {
-            try
-            {
-                if (!string.IsNullOrEmpty(targetLayer)) { try { doc!.Layers.Add(targetLayer); } catch { } }
-
-                // We will use a selection set to find objects and select them
-                var selectionSets = doc?.SelectionSets;
-                if (selectionSets == null) return $"Error: Could not access SelectionSets.";
-                dynamic? sset = null;
-
-                try
-                {
-                    sset = selectionSets.Item("BricsAI_SelSet");
-                    sset.Delete();
-                }
-                catch { }
-
-                sset = selectionSets.Add("BricsAI_SelSet");
-
-                // Filter for layer
-                short[] filterTypes = new short[] { 8 }; // DXF code for Layer
-                object[] filterData = new object[] { layerName };
-
-                sset.Select(5, // acSelectionSetAll
-                            Type.Missing, 
-                            Type.Missing, 
-                            filterTypes, 
-                            filterData);
-
-                if (sset.Count > 0)
-                {
-                    if (mode == "all") 
-                    {
-                        if (!string.IsNullOrEmpty(targetLayer))
-                        {
-                            try { doc.SendCommand($"(command \"_.CHPROP\" (ssget \"_X\" '((8 . \"{layerName}\"))) \"\" \"_LA\" \"{targetLayer}\" \"\")\n"); } catch { }
-                            return $"Moved matching objects from '{layerName}' to '{targetLayer}'.";
-                        }
-                        else
-                        {
-                            sset.Highlight(true);
-                            return $"Selected {sset.Count} objects on layer '{layerName}'. (Highlighted)";
-                        }
-                    }
-
-                    // Geometric Inner/Outer Logic
-                    double maxArea = -1;
-                    dynamic? largestObj = null;
-                    var smallerObjs = new List<dynamic>();
-
-                    for (int i = 0; i < sset.Count; i++)
-                    {
-                        var obj = sset.Item(i);
-                        try
-                        {
-                            obj.GetBoundingBox(out object minPt, out object maxPt);
-                            double[] min = (double[])minPt;
-                            double[] max = (double[])maxPt;
-                            double width = Math.Abs(max[0] - min[0]);
-                            double height = Math.Abs(max[1] - min[1]);
-                            double area = width * height;
-
-                            if (area > maxArea)
-                            {
-                                if (largestObj != null) smallerObjs.Add(largestObj);
-                                maxArea = area;
-                                largestObj = obj;
-                            }
-                            else
-                            {
-                                smallerObjs.Add(obj);
-                            }
-                        }
-                        catch { }
-                    }
-
-                    // Deselect everything in the set first, then selectively highlight
-                    sset.Highlight(false); 
-
-                    if (mode == "outer" && largestObj != null)
-                    {
-                        // Add only the largest obj into a new set, or just manually highlight it
-                        largestObj!.Highlight(true);
-                        return $"Selected outer box (largest bounds) on layer '{layerName}'.";
-                    }
-                    else if (mode == "inner" && smallerObjs.Count > 0)
-                    {
-                        foreach (var innerObj in smallerObjs)
-                        {
-                            innerObj.Highlight(true);
-                        }
-                        return $"Selected {smallerObjs.Count} inner objects on layer '{layerName}'.";
-                    }
-                }
-                
-                return $"No objects found on layer '{layerName}'.";
-            }
-            catch (Exception ex)
-            {
-                return $"Error selecting layer: {ex.Message}";
-            }
-        }
-
-        private string ApplyLayerMappings(dynamic doc)
-        {
-            try
-            {
-                string mappingPath = System.IO.Path.Combine(System.AppContext.BaseDirectory, "layer_mappings.json");
-                if (!System.IO.File.Exists(mappingPath)) return "Error: layer_mappings.json not found.";
-                string json = System.IO.File.ReadAllText(mappingPath);
-                var mappings = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json);
-                if (mappings == null) return "Error: Invalid layer mappings format.";
-
-                System.Text.StringBuilder lispMacro = new System.Text.StringBuilder();
-
-                foreach (var kvp in mappings)
-                {
-                    try { doc!.Layers.Add(kvp.Value); } catch { } // Ensure target exists
-                    lispMacro.AppendLine($"(if (setq ss (ssget \"_X\" '((8 . \"{kvp.Key}\")))) (command \"_.CHPROP\" ss \"\" \"_LA\" \"{kvp.Value}\" \"\"))");
-                }
-
-                if (lispMacro.Length > 0)
-                {
-                    string tempPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "_BricsAI_Mappings.lsp");
-                    System.IO.File.WriteAllText(tempPath, lispMacro.ToString());
-                    string lispPath = tempPath.Replace("\\", "/");
-                    doc.SendCommand($"(load \"{lispPath}\")\n");
-                }
-
-                return $"Applied mappings natively with a single batch execution via LISP script load.";
-            }
-            catch (Exception ex)
-            {
-                return $"Error applying mappings: {ex.Message}";
-            }
-        }
-
-        private string RenameDeletedLayers(dynamic doc)
-        {
-            try
-            {
-                var layers = doc?.Layers;
-                if (layers == null) return "Error: Could not access Layers.";
-                
-                var allowList = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                {
-                    "0", "Defpoints", 
-                    "Expo_BoothNumber", "Expo_BoothOutline", 
-                    "Expo_MaxBoothNumber", "Expo_MaxBoothOutline", 
-                    "Expo_Building", "Expo_Column", 
-                    "Expo_Markings", "Expo_NES", "Expo_View2"
-                };
-
-                int renameCount = 0;
-                for (int i = 0; i < layers.Count; i++)
-                {
-                    var layer = layers.Item(i);
-                    string name = layer.Name;
-
-                    if (!allowList.Contains(name) && !name.StartsWith("Deleted_", StringComparison.OrdinalIgnoreCase))
-                    {
-                        try
-                        {
-                            layer.Name = "Deleted_" + name;
-                            renameCount++;
-                        }
-                        catch { }
-                    }
-                }
-                return $"Found and renamed {renameCount} non-standard layers with 'Deleted_' prefix.";
-            }
-            catch (Exception ex)
-            {
-                return $"Error renaming layers: {ex.Message}";
-            }
-        }
-
-        private string DeleteLayersByPrefix(dynamic doc, string prefix)
-        {
-            try
-            {
-                var layers = doc?.Layers;
-                if (layers == null) return "Error: Could not access Layers.";
-
-                // 1. Switch active layer to 0 (cannot purge the current layer)
-                doc.SendCommand("(setvar \"CLAYER\" \"0\")\n");
-                int targetLayerCount = 0;
-                int unlockedCount = 0;
-                // 2. Aggressively strip all protections (Lock, Freeze, Off) natively via COM
-                for (int i = 0; i < layers.Count; i++)
-                {
-                    try
-                    {
-                        var layer = layers.Item(i);
-                        string name = layer.Name;
-
-                        if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                        {
-                            targetLayerCount++;
-                            layer.Lock = false;
-                            layer.Freeze = false;
-                            layer.LayerOn = true;
-                            unlockedCount++;
-                        }
-                    }
-                    catch { } // Ignore if a specific layer throws COM error
-                }
-
-                if (targetLayerCount == 0)
-                {
-                    return $"Found 0 layers starting with '{prefix}'. No deletion necessary.";
-                }
-                // 3. Command line ERASE with wildcard (now guaranteed to hit everything in active spaces)
-                doc.SendCommand($"(if (setq ss (ssget \"_X\" '((8 . \"{prefix}*\")))) (command \"_.ERASE\" ss \"\"))\n");
-
-                // 4. Ultra-Fast In-Process Visual LISP Block Traversal to vaporize nested entities
-                string vlisp = "(vl-load-com)(setq blks (vla-get-blocks (vla-get-activedocument (vlax-get-acad-object))))" +
-                               "(vlax-for blk blks (if (= (vla-get-isxref blk) :vlax-false) " +
-                               "(vlax-for ent blk (if (wcmatch (strcase (vla-get-layer ent)) (strcase \"" + prefix + "*\")) " +
-                               "(vl-catch-all-apply 'vla-delete (list ent))))))";
-                doc.SendCommand($"{vlisp}\n");
-
-                // 5. Purge Empty Block Definitions / Dependent Dictionaries (Requires 2 passes for nested orphans)
-                doc.SendCommand("(command \"-PURGE\" \"All\" \"*\" \"N\")\n");
-                doc.SendCommand("(command \"-PURGE\" \"All\" \"*\" \"N\")\n");
-
-                // 6. Purge the strictly targeted empty layers
-                doc.SendCommand($"(command \"-PURGE\" \"LA\" \"{prefix}*\" \"N\")\n");
-
-                return $"Unlocked {unlockedCount} '{prefix}' layers natively, erased active spaces, executed ultra-fast deep block vaporization, and double-purged.";
-            }
-            catch (Exception ex)
-            {
-                return $"Error deleting layers by prefix: {ex.Message}";
-            }
-        }
-
-        private string LockBoothLayers(dynamic doc)
-        {
-            try
-            {
-                try { doc.Layers.Item("Expo_BoothNumber").Lock = true; } catch { }
-                try { doc.Layers.Item("Expo_BoothOutline").Lock = true; } catch { }
-                return "Locked Expo_BoothNumber and Expo_BoothOutline via COM.";
-            }
-            catch (Exception ex)
-            {
-                return $"Error locking layers: {ex.Message}";
-            }
-        }
-
-        private string QSelectExplode(dynamic doc, string? itemType = null)
-        {
-            if (string.IsNullOrEmpty(itemType)) return "Error: No item type specified.";
-            try
-            {
-                string filterType = itemType.ToUpper();
-                if (filterType == "ROTATED DIMENSION") filterType = "DIMENSION";
-                if (filterType == "BLOCK REFERENCE") filterType = "INSERT";
-                if (filterType == "MTEXT") filterType = "MTEXT";
-
-                doc.SendCommand("(setvar \"PICKFIRST\" 1)\n");
-
-                string ssetName = "BA_QSel_" + System.Guid.NewGuid().ToString("N").Substring(0, 10);
-                var sset = doc.SelectionSets.Add(ssetName);
-                try
-                {
-                    sset.Select(5, Type.Missing, Type.Missing, new short[] { 0 }, new object[] { filterType });
-                    if (sset.Count > 0)
-                    {
-                        doc.SendCommand("(setvar \"QAFLAGS\" 1)\n");
-                        doc.SendCommand($"(if (setq ss (ssget \"_X\" '((0 . \"{filterType}\")))) (sssetfirst nil ss))\n");
-                        doc.SendCommand("_.EXPLODE\n");
-                        doc.SendCommand("(setvar \"QAFLAGS\" 0)\n");
-                        return $"Quick Select: Found {sset.Count} '{itemType}' entities, highlighted them, and executed EXPLODE natively.";
-                    }
-                    else
-                    {
-                        return $"Quick Select check: No '{itemType}' entities found in the drawing.";
-                    }
-                }
-                finally
-                {
-                    try { sset.Delete(); } catch { }
-                }
-            }
-            catch (Exception ex)
-            {
-                return $"Error executing QSelect Explode: {ex.Message}";
-            }
-        }
-
-        private string PrepareGeometry(dynamic doc)
-        {
-            try
-            {
-                // 0. The ultimate safeguard: ALWAYS unlock every single layer in the entire drawing first.
-                // If the vendor locked their layers before sending the file, the native EXPLODE / ERASE commands 
-                // will completely ignore them even when highlighted! By opening the floodgates here, we guarantee
-                // all geometric primitives and nested vendor blocks are exposed to the whitelist iterator.
-                doc.SendCommand("(command \"-LAYER\" \"UNLOCK\" \"*\" \"\")\n");
-
-                // 1. Lock booth layers natively (targets)
-                try { doc.Layers.Item("Expo_BoothNumber").Lock = true; } catch { }
-                try { doc.Layers.Item("Expo_BoothOutline").Lock = true; } catch { }
-
-                // 1b. Lock mapped vendor sources to protect them from explosion
-                try
-                {
-                    string mappingPath = System.IO.Path.Combine(System.AppContext.BaseDirectory, "layer_mappings.json");
-                    if (System.IO.File.Exists(mappingPath))
-                    {
-                        string json = System.IO.File.ReadAllText(mappingPath);
-                        var mappings = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json);
-                        if (mappings != null)
-                        {
-                            foreach (var kvp in mappings)
-                            {
-                                if (kvp.Value.Equals("Expo_BoothOutline", StringComparison.OrdinalIgnoreCase) ||
-                                    kvp.Value.Equals("Expo_BoothNumber", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    try { doc.Layers.Item(kvp.Key).Lock = true; } catch { }
-                                }
-                            }
-                        }
-                    }
-                }
-                catch { }
-
-                doc.SendCommand("(setvar \"PICKFIRST\" 1)\n");
-
-                // 2a. Flatten splines precisely like human
-                try
-                {
-                    string sName = "BA_Spline_" + System.Guid.NewGuid().ToString("N").Substring(0, 10);
-                    var ssetSplines = doc.SelectionSets.Add(sName);
-                    ssetSplines.Select(5, Type.Missing, Type.Missing, new short[] { 0 }, new object[] { "SPLINE" });
-                    if (ssetSplines.Count > 0)
-                    {
-                        doc.SendCommand("(if (setq ss (ssget \"_X\" '((0 . \"SPLINE\")))) (sssetfirst nil ss))\n");
-                        doc.SendCommand("FLATTEN\n\n\n"); // Extra enter to clear any hidden lines dialogs
-                    }
-                    try { ssetSplines.Delete(); } catch { }
-                } catch { }
-
-                doc.SendCommand("(setvar \"QAFLAGS\" 1)\n");
-
-                // 2b. Explode Explicit Complex Items (Just like QSelectExplode)
-                string[] explicitTypes = { "MTEXT", "HATCH", "DIMENSION", "INSERT" };
-                for (int pass = 0; pass < 3; pass++)
-                {
-                    bool hit = false;
-                    foreach (string type in explicitTypes)
-                    {
-                        try
-                        {
-                            string eName = "BA_Exp_" + System.Guid.NewGuid().ToString("N").Substring(0, 10);
-                            var ssetExp = doc.SelectionSets.Add(eName);
-                            ssetExp.Select(5, Type.Missing, Type.Missing, new short[] { 0 }, new object[] { type });
-                            if (ssetExp.Count > 0)
-                            {
-                                hit = true;
-                                doc.SendCommand($"(if (setq ss (ssget \"_X\" '((0 . \"{type}\")))) (sssetfirst nil ss))\n");
-                                doc.SendCommand("_.EXPLODE\n");
-                            }
-                            try { ssetExp.Delete(); } catch { }
-                        }
-                        catch { }
-                    }
-                    if (!hit) break; // Optimization
-                }
-
-                // User Whitelist: Arc, Line, Circle, Ellipse, Polyline, Text, Solid
-                string whitelistFilter = "'((-4 . \"<NOT\") (-4 . \"<OR\") (0 . \"ARC\") (0 . \"LINE\") (0 . \"CIRCLE\") (0 . \"ELLIPSE\") (0 . \"POLYLINE\") (0 . \"LWPOLYLINE\") (0 . \"TEXT\") (0 . \"SOLID\") (-4 . \"OR>\") (-4 . \"NOT>\"))";
-                short[] wType = new short[] { -4, -4, 0, 0, 0, 0, 0, 0, 0, 0, -4, -4 };
-                object[] wData = new object[] { "<NOT", "<OR", "ARC", "LINE", "CIRCLE", "ELLIPSE", "POLYLINE", "LWPOLYLINE", "TEXT", "SOLID", "OR>", "NOT>" };
-
-                // 2c. Explode Universal Whitelist
-                for (int pass = 0; pass < 3; pass++)
-                {
-                    try
-                    {
-                        string eName = "BA_Uni_" + System.Guid.NewGuid().ToString("N").Substring(0, 10);
-                        var ssetUni = doc.SelectionSets.Add(eName);
-                        ssetUni.Select(5, Type.Missing, Type.Missing, wType, wData);
-                        if (ssetUni.Count > 0)
-                        {
-                            doc.SendCommand($"(if (setq ss (ssget \"_X\" {whitelistFilter})) (sssetfirst nil ss))\n");
-                            doc.SendCommand("_.EXPLODE\n");
-                        }
-                        else
-                        {
-                            try { ssetUni.Delete(); } catch { }
-                            break;
-                        }
-                        try { ssetUni.Delete(); } catch { }
-                    } catch { }
-                }
-
-                // 2d. ERASE unresolvable structures outside the whitelist
-                try
-                {
-                    string delName = "BA_Del_" + System.Guid.NewGuid().ToString("N").Substring(0, 10);
-                    var ssetDel = doc.SelectionSets.Add(delName);
-                    ssetDel.Select(5, Type.Missing, Type.Missing, wType, wData);
-                    if (ssetDel.Count > 0)
-                    {
-                        doc.SendCommand($"(if (setq ss (ssget \"_X\" {whitelistFilter})) (sssetfirst nil ss))\n");
-                        doc.SendCommand("_.ERASE\n");
-                    }
-                    try { ssetDel.Delete(); } catch { }
-                } catch { }
-
-                doc.SendCommand("(setvar \"QAFLAGS\" 0)\n");
-
-                return "Geometry Prepared: Locked booth layers, universally exploded explicit items and non-primitives 3 times, and erased unresolvable structures.";
-            }
-            catch (Exception ex)
-            {
-                return $"Error preparing geometry: {ex.Message}";
-            }
-        }
-
-        private string LearnLayerMapping(string? targetStr)
-        {
-            if (string.IsNullOrEmpty(targetStr) || !targetStr.Contains(":")) return "Error: Must provide Source:Target layer formats.";
-            
-            try
-            {
-                var parts = targetStr.Split(':');
-                string sourceLayer = parts[0].Trim();
-                string targetLayer = parts[1].Trim();
-
-                string mappingPath = System.IO.Path.Combine(System.AppContext.BaseDirectory, "layer_mappings.json");
-                Dictionary<string, string> mappings;
-                if (System.IO.File.Exists(mappingPath))
-                {
-                    string json = System.IO.File.ReadAllText(mappingPath);
-                    mappings = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new Dictionary<string, string>();
-                }
-                else
-                {
-                    mappings = new Dictionary<string, string>();
-                }
-
-                mappings[sourceLayer] = targetLayer;
-                System.IO.File.WriteAllText(mappingPath, System.Text.Json.JsonSerializer.Serialize(mappings, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
-                
-                return $"Successfully learned that '{sourceLayer}' maps to '{targetLayer}'. I have written this to my permanent memory bank (layer_mappings.json) and will automatically migrate it on all future CAD files.";
-            }
-            catch (Exception ex)
-            {
-                return $"Error learning layer mapping: {ex.Message}";
-            }
-        }
     }
 }

@@ -50,5 +50,11 @@ namespace BricsAI.Overlay.Services
             // For this design, let's keep it exact for simplicity, or return all tools where TargetVersion <= majorVersion
             return _plugins.Where(p => p.TargetVersion <= majorVersion);
         }
+
+        public IToolPlugin? GetPluginForCommand(string netCommandName, int majorVersion)
+        {
+            // Iterates through loaded plugins specific to the version and finds the first one that claims it can handle the command
+            return GetPluginsForVersion(majorVersion).FirstOrDefault(p => p.CanExecute(netCommandName));
+        }
     }
 }

@@ -13,5 +13,7 @@ namespace BricsAI.Plugins.V15Tools
             return "User: 'Clean up the drawing by removing unused layers'\n" +
                    "Response: { \"tool_calls\": [{ \"command_name\": \"PURGE\", \"lisp_code\": \"(command \\\"_.-PURGE\\\" \\\"BA\\\" \\\"*\\\" \\\"N\\\")\" }] }";
         }
+        public bool CanExecute(string netCommandName) => false;
+        public string Execute(dynamic doc, string netCmd) => "Not implemented natively.";
     }
 }

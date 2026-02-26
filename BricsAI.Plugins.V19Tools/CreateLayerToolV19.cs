@@ -14,5 +14,7 @@ namespace BricsAI.Plugins.V19Tools
             return "User: 'Create a new layer called Wall'\n" +
                    "Response: { \"tool_calls\": [{ \"command_name\": \"CREATE LAYER\", \"lisp_code\": \"(command \\\"_.-LAYER\\\" \\\"Make\\\" \\\"Wall\\\" \\\"\\\")\" }] }";
         }
+        public bool CanExecute(string netCommandName) => false;
+        public string Execute(dynamic doc, string netCmd) => "Not implemented natively.";
     }
 }

@@ -13,5 +13,7 @@ namespace BricsAI.Plugins.V15Tools
             return "User: 'Flatten everything in the drawing'\n" +
                    "Response: { \"tool_calls\": [{ \"command_name\": \"FLATTEN\", \"lisp_code\": \"(command \\\"_.FLATTEN\\\" (ssget \\\"_X\\\") \\\"\\\")\" }] }";
         }
+        public bool CanExecute(string netCommandName) => false;
+        public string Execute(dynamic doc, string netCmd) => "Not implemented natively.";
     }
 }

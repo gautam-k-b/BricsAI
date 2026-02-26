@@ -13,5 +13,7 @@ namespace BricsAI.Plugins.V19Tools
             return "User: 'Turn on all layers'\n" +
                    "Response: { \"tool_calls\": [{ \"command_name\": \"LAYON\", \"lisp_code\": \"(command \\\"_.LAYON\\\")\" }] }";
         }
+        public bool CanExecute(string netCommandName) => false;
+        public string Execute(dynamic doc, string netCmd) => "Not implemented natively.";
     }
 }

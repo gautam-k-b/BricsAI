@@ -13,5 +13,7 @@ namespace BricsAI.Plugins.V19Tools
             return "User: 'Open layer window'\n" +
                    "Response: { \"tool_calls\": [{ \"command_name\": \"LAYERSPANELOPEN\", \"lisp_code\": \"_LAYERSPANELOPEN\" }] }";
         }
+        public bool CanExecute(string netCommandName) => false;
+        public string Execute(dynamic doc, string netCmd) => "Not implemented natively.";
     }
 }

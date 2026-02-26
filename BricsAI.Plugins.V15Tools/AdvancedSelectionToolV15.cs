@@ -15,5 +15,7 @@ namespace BricsAI.Plugins.V15Tools
                    "User: 'Clear my selection' or 'Deselect everything'\n" +
                    "Response: { \"tool_calls\": [{ \"command_name\": \"LISP_DESELECT\", \"lisp_code\": \"(sssetfirst nil)\" }] }";
         }
+        public bool CanExecute(string netCommandName) => false;
+        public string Execute(dynamic doc, string netCmd) => "Not implemented natively.";
     }
 }

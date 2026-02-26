@@ -149,9 +149,14 @@ namespace BricsAI.Overlay.ViewModels
                 // Execute against COM
                 var cadMsg = new ChatMessage { Role = "Assistant", Content = $"🚀 BricsCAD: Hijacking your mouse to execute native tools...", IsThinking = true };
                 Messages.Add(cadMsg);
-                string executionLogs = await Task.Run(() => _comClient.ExecuteActionAsync(actionPlanJson));
+
+                var progress = new System.Progress<string>(update =>
+                {
+                    cadMsg.Content += $"\n{update}";
+                });
+
+                string executionLogs = await Task.Run(() => _comClient.ExecuteActionAsync(actionPlanJson, progress));
                 cadMsg.IsThinking = false;
-                Messages.Add(new ChatMessage { Role = "Assistant", Content = $"📝 Execution Logs:\n{executionLogs}" });
 
                 // DUMP TO DISK FOR DEBUGGING
                 File.WriteAllText("AI_Context.txt", executorContext);
