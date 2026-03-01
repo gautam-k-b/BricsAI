@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using System.Windows.Input;
@@ -51,6 +53,12 @@ namespace BricsAI.Overlay.ViewModels
         private readonly SurveyorAgent _surveyor;
         private readonly ExecutorAgent _executor;
         private readonly ValidatorAgent _validator;
+        private readonly MapperAgent _mapper;
+        private readonly MappingReviewAgent _mappingReviewAgent;
+
+        private bool _isAwaitingMappingConfirmation = false;
+        private string _pendingMappingCommands = "";
+        private string _originalProofingCommand = "";
 
         public MainViewModel()
         {
@@ -58,6 +66,8 @@ namespace BricsAI.Overlay.ViewModels
             _surveyor = new SurveyorAgent();
             _executor = new ExecutorAgent();
             _validator = new ValidatorAgent();
+            _mapper = new MapperAgent();
+            _mappingReviewAgent = new MappingReviewAgent();
 
             SendCommand = new RelayCommand(async _ => await SendMessageAsync());
             RunProofingCommand = new RelayCommand(async _ => await ExecuteQuickAction("Please proof this drawing for an exhibition context. Follow the standard A2Z layering, exploding, and layout rules."));
@@ -86,6 +96,74 @@ namespace BricsAI.Overlay.ViewModels
             
             Messages.Add(new ChatMessage { Role = "User", Content = userMessage });
 
+            try
+            {
+                // --- INTERACTIVE MAPPING REVIEW INTERCEPTION ---
+            if (_isAwaitingMappingConfirmation)
+            {
+                string inputLower = userMessage.ToLower().Trim();
+                if (inputLower == "cancel" || inputLower == "stop" || inputLower == "abort" || inputLower == "end")
+                {
+                    _isAwaitingMappingConfirmation = false;
+                    _pendingMappingCommands = "";
+                    _originalProofingCommand = "";
+                    Messages.Add(new ChatMessage { Role = "Assistant", Content = "🛑 Mapping review cancelled. Dashboard unlocked." });
+                    return; // IsBusy is already false here.
+                }
+
+                IsBusy = true;
+                
+                if (inputLower == "yes" || inputLower == "y" || inputLower.StartsWith("yes") || inputLower.StartsWith("looks good") || inputLower.StartsWith("correct") || inputLower.StartsWith("proceed") || inputLower.StartsWith("ok") || inputLower.StartsWith("sure") || inputLower.StartsWith("fine"))
+                {
+                    var confirmMsg = new ChatMessage { Role = "Assistant", Content = "✅ Saving finalized mappings...", IsThinking = true };
+                    Messages.Add(confirmMsg);
+                    IProgress<string> confirmProgress = new Progress<string>(update => { confirmMsg.Content += $"\n{update}"; });
+                    
+                    try
+                    {
+                        var doc = System.Text.Json.JsonDocument.Parse(_pendingMappingCommands);
+                        if (doc.RootElement.GetProperty("tool_calls").GetArrayLength() > 0)
+                        {
+                            await Task.Run(() => _comClient.ExecuteActionAsync(_pendingMappingCommands, confirmProgress));
+                        }
+                        else
+                        {
+                            confirmProgress.Report("No mappings to save.");
+                        }
+                    }
+                    catch
+                    {
+                        // Ignore malformed JSON instead of crashing
+                    }
+                    
+                    confirmMsg.IsThinking = false;
+
+                    _isAwaitingMappingConfirmation = false;
+                    _pendingMappingCommands = "";
+                    
+                    IsBusy = false; // Unlock so ExecuteQuickAction isn't blocked by its guard
+                    
+                    // Resume original proofing recursively, but flag it to skip mapping review
+                    // to prevent an infinite loop where Surveyor finds the same unmapped layers again.
+                    await ExecuteQuickAction(_originalProofingCommand + " _skipMappingReviewSequence_");
+                    return;
+                }
+                
+                // Assume it's a correction
+                var reviewMsg = new ChatMessage { Role = "Assistant", Content = "🧠 Review Agent: Applying your corrections...", IsThinking = true };
+                Messages.Add(reviewMsg);
+                
+                var reviewResult = await Task.Run(() => _mappingReviewAgent.UpdateMappingsAsync(_pendingMappingCommands, userMessage));
+                _pendingMappingCommands = reviewResult.UpdatedMappings;
+                
+                string formattedUpdatedProps = FormatMappingsForDisplay(_pendingMappingCommands);
+                reviewMsg.IsThinking = false;
+                reviewMsg.Content = $"♻️ Updated Mappings Proposed:\n\n{formattedUpdatedProps}\n\nDoes this look correct now? (Reply 'yes' to save, 'cancel' to abort, or type more corrections)";
+                
+                IsBusy = false; // Unlock UI again for further review
+                return;
+            }
+
             IsBusy = true;
             
             // 0. Ensure connected to get the version
@@ -95,9 +173,10 @@ namespace BricsAI.Overlay.ViewModels
             }
 
             string layerMappings = "";
+            string projRoot = System.IO.Directory.GetParent(System.AppContext.BaseDirectory)?.Parent?.Parent?.Parent?.FullName ?? System.AppContext.BaseDirectory;
+            string mappingPath = Path.Combine(projRoot, "layer_mappings.json");
             try
             {
-                string mappingPath = Path.Combine(System.AppContext.BaseDirectory, "layer_mappings.json");
                 if (File.Exists(mappingPath))
                     layerMappings = File.ReadAllText(mappingPath);
             }
@@ -128,6 +207,126 @@ namespace BricsAI.Overlay.ViewModels
             totalTokens += surveyorResult.Tokens;
             Messages.Add(new ChatMessage { Role = "Assistant", Content = $"📋 Surveyor Report:\n{surveyorSummary}" });
 
+            // Agent 1.5: Semantic Layer Auto-Mapper (Intercept Unknowns via C# deterministic parsing)
+            var standardA2zLayers = new HashSet<string>(StringComparer.OrdinalIgnoreCase) 
+            { 
+                "0", "Defpoints", "Expo_BoothOutline", "Expo_BoothNumber", "Expo_Building", "Expo_Markings", "Expo_View2", "Expo_Column",
+                "Expo_NES", "Expo_MaxBoothOutline", "Expo_MaxBoothNumber"
+            };
+
+            // Safely sanitize the COM 'Step' and 'Layers found:' prefix so it doesn't pollute the target logic
+            string cleanLayersPayload = currentLayers;
+            if (cleanLayersPayload.Contains("Layers found:"))
+                cleanLayersPayload = cleanLayersPayload.Substring(cleanLayersPayload.IndexOf("Layers found:") + "Layers found:".Length);
+
+            var unknownLayers = cleanLayersPayload.Split(new[] { '\r', '\n', ',' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(l => l.Trim())
+                .Where(l => !string.IsNullOrWhiteSpace(l) && !standardA2zLayers.Contains(l))
+                .Where(l => 
+                {
+                    try
+                    {
+                        if (string.IsNullOrWhiteSpace(layerMappings)) return true;
+                        var existingMappings = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(layerMappings);
+                        if (existingMappings == null) return true;
+                        
+                        // 1. Direct exact match check
+                        return !existingMappings.ContainsKey(l);
+                    }
+                    catch
+                    {
+                        return true;
+                    }
+                })
+                .Distinct()
+                .ToList();
+
+            bool skipMappingReview = userMessage.Contains("_skipMappingReviewSequence_");
+            string cleanUserMessage = userMessage.Replace("_skipMappingReviewSequence_", "").Trim();
+            
+            // Heuristic check: only trigger the massive Auto-Mapper loop if the user is 
+            // actually asking to proof, map, learn, survey, or evaluate the drawing.
+            bool isProofingOrMappingRequest = cleanUserMessage.Contains("proof", StringComparison.OrdinalIgnoreCase) || 
+                                              cleanUserMessage.Contains("map", StringComparison.OrdinalIgnoreCase)   ||
+                                              cleanUserMessage.Contains("learn", StringComparison.OrdinalIgnoreCase) ||
+                                              cleanUserMessage.Contains("survey", StringComparison.OrdinalIgnoreCase) ||
+                                              cleanUserMessage.Contains("evaluate", StringComparison.OrdinalIgnoreCase);
+
+            if (unknownLayers.Any() && !skipMappingReview && isProofingOrMappingRequest)
+            {
+                if (_comClient.IsConnected)
+                {
+                    // Globally unlock all layers natively before surveying so we securely access all geometric structures
+                    await Task.Run(() => _comClient.ForceUnlockAllLayersSynchronously());
+                }
+
+                var mapperMsg = new ChatMessage { Role = "Assistant", Content = $"✨ Mapper Agent: Intercepting {unknownLayers.Count} unknown vendor layers. Polling semantics...", IsThinking = true };
+                Messages.Add(mapperMsg);
+
+                IProgress<string> mapProgress = new Progress<string>(update => { mapperMsg.Content += $"\n{update}"; });
+
+                var pendingToolCalls = new List<string>();
+
+                foreach (var unknownLayer in unknownLayers)
+                {
+                    mapProgress.Report($"\n🔎 Polling semantics for '{unknownLayer}'...");
+                    string safeLayerName = unknownLayer.Replace("\"", "\\\"").Replace("\\", "\\\\");
+                    string footprintPlan = $@"{{ ""tool_calls"": [{{ ""command_name"": ""POLL_SEMANTICS"", ""lisp_code"": ""NET:POLL_LAYER_SEMANTICS:{safeLayerName}"" }}] }}";
+                    
+                    string footprint = await Task.Run(() => _comClient.ExecuteActionAsync(footprintPlan, mapProgress));
+                    
+                    if (!footprint.Contains("Error") && footprint.Length > 10)
+                    {
+                        mapProgress.Report($"🧠 Thinking: Deducing A2Z Mapping...");
+                        var mapperResult = await Task.Run(() => _mapper.DeduceLayerMappingAsync(unknownLayer, footprint));
+                        totalTokens += mapperResult.Tokens;
+                        
+                        try 
+                        {
+                           var doc = System.Text.Json.JsonDocument.Parse(mapperResult.ActionPlan);
+                           var calls = doc.RootElement.GetProperty("tool_calls");
+                           foreach (var call in calls.EnumerateArray())
+                           {
+                               pendingToolCalls.Add(call.GetRawText());
+                           }
+                        } catch { }
+                    }
+                    else
+                    {
+                        mapProgress.Report($"⚠️ Layer empty or unreadable. Skipping.");
+                    }
+                }
+                
+                mapperMsg.IsThinking = false;
+
+                if (pendingToolCalls.Any())
+                {
+                    _pendingMappingCommands = "{ \"tool_calls\": [\n" + string.Join(",\n", pendingToolCalls) + "\n] }";
+                    _originalProofingCommand = userMessage;
+                    _isAwaitingMappingConfirmation = true;
+                    
+                    string formattedProps = FormatMappingsForDisplay(_pendingMappingCommands);
+                    Messages.Add(new ChatMessage { Role = "Assistant", Content = $"🛑 **Human Review Required**\nHere are the proposed layer mappings:\n\n{formattedProps}\n\nDoes this look correct? (Reply 'yes' to proceed, 'cancel' to abort, or provide natural language corrections)" });
+                    
+                    stopwatch.Stop();
+                    double surveySeconds = Math.Round(stopwatch.Elapsed.TotalSeconds, 1);
+                    Messages.Add(new ChatMessage { Role = "Assistant", Content = $"📊 Performance: {totalTokens} API tokens consumed mapping {unknownLayers.Count} layers. Surveyor completed in {surveySeconds} seconds." });
+
+                    IsBusy = false; // Unlock UI to allow user feedback
+                    return; // Halt execution and wait for human response
+                }
+
+                // Reload mappings memory bank now that we've dynamically updated it
+                try
+                {
+                    string projRootRefresh = System.IO.Directory.GetParent(System.AppContext.BaseDirectory)?.Parent?.Parent?.Parent?.FullName ?? System.AppContext.BaseDirectory;
+                    string mappingPathRefresh = Path.Combine(projRootRefresh, "layer_mappings.json");
+                    if (File.Exists(mappingPathRefresh))
+                        layerMappings = File.ReadAllText(mappingPathRefresh);
+                }
+                catch { }
+            }
+
             int maxRetries = 2;
             int attempt = 0;
             bool success = false;
@@ -141,7 +340,7 @@ namespace BricsAI.Overlay.ViewModels
                 // Agent 2: Executor
                 var executorMsg = new ChatMessage { Role = "Assistant", Content = $"⚙️ Executor Agent: Drafting the master execution plan to restructure your booths! (Attempt {attempt})...", IsThinking = true };
                 Messages.Add(executorMsg);
-                var executorResult = await Task.Run(() => _executor.GenerateMacrosAsync(userMessage, executorContext, _comClient.MajorVersion, layerMappings));
+                var executorResult = await Task.Run(() => _executor.GenerateMacrosAsync(cleanUserMessage, executorContext, _comClient.MajorVersion, layerMappings));
                 executorMsg.IsThinking = false;
                 string actionPlanJson = executorResult.ActionPlan;
                 totalTokens += executorResult.Tokens;
@@ -192,13 +391,46 @@ namespace BricsAI.Overlay.ViewModels
             double seconds = Math.Round(stopwatch.Elapsed.TotalSeconds, 1);
             Messages.Add(new ChatMessage { Role = "Assistant", Content = $"📊 Performance: {totalTokens} API tokens consumed. Task completed in {seconds} seconds." });
 
-            IsBusy = false;
+                IsBusy = false;
+            }
+            catch (Exception ex)
+            {
+                Messages.Add(new ChatMessage { Role = "Assistant", Content = $"❌ A critical system error occurred during orchestration:\n{ex.Message}" });
+                IsBusy = false;
+            }
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;
         protected void OnPropertyChanged([CallerMemberName] string? name = null)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+        }
+
+        private string FormatMappingsForDisplay(string jsonMappings)
+        {
+            try
+            {
+                var doc = System.Text.Json.JsonDocument.Parse(jsonMappings);
+                var calls = doc.RootElement.GetProperty("tool_calls");
+                var formattedMappings = new List<string>();
+                foreach (var call in calls.EnumerateArray())
+                {
+                    string lispCode = call.GetProperty("lisp_code").GetString() ?? "";
+                    if (lispCode.StartsWith("NET:LEARN_LAYER_MAPPING:"))
+                    {
+                        var parts = lispCode.Substring("NET:LEARN_LAYER_MAPPING:".Length).Split(':');
+                        if (parts.Length == 2)
+                        {
+                            formattedMappings.Add($"• **{parts[0]}**  ➔  **{parts[1]}**");
+                        }
+                    }
+                }
+                return string.Join("\n", formattedMappings);
+            }
+            catch
+            {
+                return jsonMappings; // Fallback to raw JSON if parse fails
+            }
         }
     }
 

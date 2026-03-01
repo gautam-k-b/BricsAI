@@ -151,7 +151,7 @@
                                     </Border.Style>
                                     <StackPanel>
                                         <TextBlock Text="{Binding DisplayName}" FontWeight="Bold" Foreground="#DDD" Margin="0,0,0,2"/>
-                                        <TextBlock Text="{Binding Content}" Foreground="White" TextWrapping="Wrap"/>
+                                        <TextBox Text="{Binding Content, Mode=OneWay}" IsReadOnly="True" BorderThickness="0" Background="Transparent" Foreground="White" TextWrapping="Wrap" FontSize="12" SelectionBrush="#00A8FF"/>
                                         
                                         <!-- Animated Thinking Dots -->
                                         <StackPanel Orientation="Horizontal" Margin="0,5,0,0">

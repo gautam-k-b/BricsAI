@@ -195,20 +195,17 @@ namespace BricsAI.Plugins.V19Tools
         {
             try
             {
-                // 0. The ultimate safeguard: ALWAYS unlock every single layer in the entire drawing first.
-                // If the vendor locked their layers before sending the file, the native EXPLODE / ERASE commands 
-                // will completely ignore them even when highlighted! By opening the floodgates here, we guarantee
-                // all geometric primitives and nested vendor blocks are exposed to the whitelist iterator.
-                doc.SendCommand("(command \"-LAYER\" \"UNLOCK\" \"*\" \"\")\n");
-
                 // 1. Lock booth layers natively (targets)
                 try { doc.Layers.Item("Expo_BoothNumber").Lock = true; } catch { }
                 try { doc.Layers.Item("Expo_BoothOutline").Lock = true; } catch { }
+                try { doc.Layers.Item("Expo_MaxBoothNumber").Lock = true; } catch { }
+                try { doc.Layers.Item("Expo_MaxBoothOutline").Lock = true; } catch { }
 
                 // 1b. Lock mapped vendor sources to protect them from explosion and deletion
                 try
                 {
-                    string mappingPath = System.IO.Path.Combine(System.AppContext.BaseDirectory, "layer_mappings.json");
+                    string projRoot = System.IO.Directory.GetParent(System.AppContext.BaseDirectory)?.Parent?.Parent?.Parent?.FullName ?? System.AppContext.BaseDirectory;
+                    string mappingPath = System.IO.Path.Combine(projRoot, "layer_mappings.json");
                     if (System.IO.File.Exists(mappingPath))
                     {
                         string json = System.IO.File.ReadAllText(mappingPath);
@@ -217,13 +214,36 @@ namespace BricsAI.Plugins.V19Tools
                         {
                             foreach (var kvp in mappings)
                             {
-                                if (kvp.Value.Equals("Expo_BoothOutline", System.StringComparison.OrdinalIgnoreCase) ||
-                                    kvp.Value.Equals("Expo_BoothNumber", System.StringComparison.OrdinalIgnoreCase))
+                                string target = kvp.Value.Trim();
+                                if (target.Equals("Expo_BoothOutline", System.StringComparison.OrdinalIgnoreCase) ||
+                                    target.Equals("Expo_BoothNumber", System.StringComparison.OrdinalIgnoreCase) ||
+                                    target.Equals("Expo_MaxBoothOutline", System.StringComparison.OrdinalIgnoreCase) ||
+                                    target.Equals("Expo_MaxBoothNumber", System.StringComparison.OrdinalIgnoreCase))
                                 {
-                                    try { doc.Layers.Item(kvp.Key).Lock = true; } catch { }
+                                    try 
+                                    { 
+                                        var sourceLayer = doc.Layers.Item(kvp.Key.Trim());
+                                        sourceLayer.Lock = true; 
+                                    } 
+                                    catch { }
                                 }
                             }
                         }
+                    }
+
+                    // 1c. Heuristic Fallback: Lock any unmapped layer containing "booth outline" or "booth number"
+                    for (int i = 0; i < doc.Layers.Count; i++)
+                    {
+                        try
+                        {
+                            var lyr = doc.Layers.Item(i);
+                            string nName = ((string)lyr.Name).ToLower().Replace(" ", "").Replace("_", "").Replace("-", "");
+                            if ((nName.Contains("boothoutline") || nName.Contains("boothnumber")) || nName.Contains("maxboothoutline") || nName.Contains("maxboothnumber"))
+                            {
+                                lyr.Lock = true;
+                            }
+                        }
+                        catch { }
                     }
                 }
                 catch { }

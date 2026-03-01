@@ -116,6 +116,22 @@ namespace BricsAI.Overlay.Services
             });
         }
 
+        public void ForceUnlockAllLayersSynchronously()
+        {
+            try
+            {
+                if (_acadApp?.ActiveDocument?.Layers != null)
+                {
+                    var layers = _acadApp.ActiveDocument.Layers;
+                    for (int i = 0; i < layers.Count; i++)
+                    {
+                        try { layers.Item(i).Lock = false; } catch { }
+                    }
+                }
+            }
+            catch { }
+        }
+
         private void DetectVersion()
         {
             try
@@ -196,7 +212,7 @@ namespace BricsAI.Overlay.Services
                                     if (plugin != null)
                                     {
                                         progress?.Report($"🛠️ [{step}/{tools.GetArrayLength()}] Executing {plugin.Name}...");
-                                        string executeResult = plugin.Execute(_acadApp.ActiveDocument, netCmd);
+                                        string executeResult = plugin.Execute(_acadApp!.ActiveDocument, netCmd);
                                         string logEntry = $"Step {step}: {executeResult}";
                                         results.Add(logEntry);
                                         progress?.Report($"✅ {executeResult}\n");
@@ -256,7 +272,7 @@ namespace BricsAI.Overlay.Services
                         if (plugin != null)
                         {
                             progress?.Report($"🛠️ Executing {plugin.Name}...");
-                            string executeResult = plugin.Execute(_acadApp.ActiveDocument, netCmdSingle);
+                            string executeResult = plugin.Execute(_acadApp!.ActiveDocument, netCmdSingle);
                             progress?.Report($"✅ {executeResult}\n");
                             return executeResult;
                         }

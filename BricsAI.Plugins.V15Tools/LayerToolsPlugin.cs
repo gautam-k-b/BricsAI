@@ -29,6 +29,7 @@ namespace BricsAI.Plugins.V15Tools
                    netCommandName.StartsWith("NET:RENAME_DELETED_LAYERS") ||
                    netCommandName.StartsWith("NET:DELETE_LAYERS_BY_PREFIX") ||
                    netCommandName.StartsWith("NET:LOCK_BOOTH_LAYERS") ||
+                   netCommandName.StartsWith("NET:POLL_LAYER_SEMANTICS") ||
                    netCommandName.StartsWith("NET:LEARN_LAYER_MAPPING");
         }
 
@@ -57,6 +58,7 @@ namespace BricsAI.Plugins.V15Tools
             if (netCmd.StartsWith("NET:RENAME_DELETED_LAYERS")) return RenameDeletedLayers(doc);
             if (netCmd.StartsWith("NET:DELETE_LAYERS_BY_PREFIX:")) return DeleteLayersByPrefix(doc, ExtractTarget(netCmd));
             if (netCmd.StartsWith("NET:LOCK_BOOTH_LAYERS")) return LockBoothLayers(doc);
+            if (netCmd.StartsWith("NET:POLL_LAYER_SEMANTICS:")) return PollLayerSemantics(doc, netCmd);
             if (netCmd.StartsWith("NET:LEARN_LAYER_MAPPING:")) return LearnLayerMapping(netCmd);
             
             return "Error: Command not explicitly handled in LayerToolsPlugin.";
@@ -73,7 +75,8 @@ namespace BricsAI.Plugins.V15Tools
                 string sourceLayer = layerParts[0].Trim();
                 string targetLayer = layerParts[1].Trim();
                 
-                string mappingPath = System.IO.Path.Combine(System.AppContext.BaseDirectory, "layer_mappings.json");
+                string projRoot = System.IO.Directory.GetParent(System.AppContext.BaseDirectory)?.Parent?.Parent?.Parent?.FullName ?? System.AppContext.BaseDirectory;
+                string mappingPath = System.IO.Path.Combine(projRoot, "layer_mappings.json");
                 Dictionary<string, string> mappings = new Dictionary<string, string>();
                 
                 if (System.IO.File.Exists(mappingPath))
@@ -92,6 +95,70 @@ namespace BricsAI.Plugins.V15Tools
             catch (System.Exception ex)
             {
                 return $"Error learning layer mapping: {ex.Message}";
+            }
+        }
+
+        private string PollLayerSemantics(dynamic doc, string cmd)
+        {
+            try
+            {
+                string targetLayer = cmd.Substring("NET:POLL_LAYER_SEMANTICS:".Length).Trim();
+                if (string.IsNullOrEmpty(targetLayer)) return "Error: Layer name required.";
+
+                var selectionSets = doc?.SelectionSets;
+                if (selectionSets == null) return "Error: Could not access SelectionSets.";
+                
+                dynamic? sset = null;
+                try { sset = selectionSets.Item("BricsAI_PollSet"); sset.Delete(); } catch { }
+                sset = selectionSets.Add("BricsAI_PollSet");
+
+                short[] filterType = new short[] { 8 };
+                object[] filterData = new object[] { targetLayer };
+
+                try { sset.Select(5, Type.Missing, Type.Missing, filterType, filterData); } catch { return $"Error: Failed to select layer {targetLayer}"; }
+
+                int count = sset.Count;
+                if (count == 0) return "[]";
+
+                Dictionary<string, int> entityTypes = new Dictionary<string, int>();
+                HashSet<string> blockNames = new HashSet<string>();
+                HashSet<string> textValues = new HashSet<string>();
+
+                for (int i = 0; i < count; i++)
+                {
+                    var entity = sset.Item(i);
+                    string eType = entity.ObjectName;
+                    if (entityTypes.ContainsKey(eType)) entityTypes[eType]++; else entityTypes[eType] = 1;
+
+                    if (eType.Contains("BlockReference"))
+                    {
+                        try { blockNames.Add(entity.Name); } catch { }
+                    }
+                    else if (eType.Contains("Text") || eType.Contains("MText"))
+                    {
+                        try 
+                        { 
+                            string txt = entity.TextString;
+                            if (txt.Length > 20) txt = txt.Substring(0, 20);
+                            textValues.Add(txt); 
+                        } catch { }
+                    }
+                }
+
+                var result = new
+                {
+                    Layer = targetLayer,
+                    TotalCount = count,
+                    EntityTypes = entityTypes,
+                    BlockNames = blockNames.ToArray(),
+                    TextSample = textValues.ToArray()
+                };
+
+                return System.Text.Json.JsonSerializer.Serialize(result);
+            }
+            catch (Exception ex)
+            {
+                return $"Error polling semantics: {ex.Message}";
             }
         }
 
@@ -194,7 +261,8 @@ namespace BricsAI.Plugins.V15Tools
         {
             try
             {
-                string mappingPath = System.IO.Path.Combine(System.AppContext.BaseDirectory, "layer_mappings.json");
+                string projRoot = System.IO.Directory.GetParent(System.AppContext.BaseDirectory)?.Parent?.Parent?.Parent?.FullName ?? System.AppContext.BaseDirectory;
+                string mappingPath = System.IO.Path.Combine(projRoot, "layer_mappings.json");
                 if (!System.IO.File.Exists(mappingPath)) return "Error: layer_mappings.json not found.";
                 string json = System.IO.File.ReadAllText(mappingPath);
                 var mappings = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json);
@@ -251,6 +319,7 @@ namespace BricsAI.Plugins.V15Tools
                         try
                         {
                             layer.Name = "Deleted_" + name;
+                            layer.Lock = false; // Reset lock state when relegating to deleted
                             renameCount++;
                         }
                         catch { }
@@ -330,7 +399,9 @@ namespace BricsAI.Plugins.V15Tools
             {
                 try { doc.Layers.Item("Expo_BoothNumber").Lock = true; } catch { }
                 try { doc.Layers.Item("Expo_BoothOutline").Lock = true; } catch { }
-                return "Locked Expo_BoothNumber and Expo_BoothOutline via COM.";
+                try { doc.Layers.Item("Expo_MaxBoothNumber").Lock = true; } catch { }
+                try { doc.Layers.Item("Expo_MaxBoothOutline").Lock = true; } catch { }
+                return "Locked Expo_BoothNumber, Expo_BoothOutline, Expo_MaxBoothNumber, and Expo_MaxBoothOutline via COM.";
             }
             catch (Exception ex)
             {

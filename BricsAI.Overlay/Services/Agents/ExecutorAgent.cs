@@ -32,8 +32,8 @@ CRITICAL RULES:
 4. NO LISP WRAPPERS FOR NET COMMANDS: When using a `NET:` prefix command (like `NET:SELECT_BOOTH_BOXES`), you MUST use the exact raw string value in the `lisp_code` field. DO NOT wrap it in LISP syntax like `(c:NET:...)` or `(command ""NET:..."")`. Just write exactly `NET:SELECT_BOOTH_BOXES`.
 5. MACRO SEQUENCES: You are allowed and encouraged to output massive JSON arrays containing 10+ `tool_calls` to sequentially orchestrate full workflows. **CRITICAL: NEVER STOP EARLY. If generating a proofing sequence, you MUST output all 6 steps A through F in a single response.**
 6. PROOFING ORDER OF OPERATIONS: If asked to proof a drawing, you MUST execute exactly this sequence:
-   A. Prepare Geometry: You MUST execute exactly `NET:PREPARE_GEOMETRY` as the very first step. This C# native tool will automatically lock all Booth layers, run flatten on Splines, safely explode structures 3 times, and purge unexplodable junk.
-   B. Unlock All Layers: After geometry preparation, you MUST unlock all layers using `(command ""-LAYER"" ""UNLOCK"" ""*"" """")` BEFORE running any migrations!
+   A. Unlock All Layers: AS THE VERY FIRST STEP, you MUST execute `(command ""-LAYER"" ""UNLOCK"" ""*"" """")` to guarantee all vendor geometry is exposed before the plugins run.
+   B. Prepare Geometry: You MUST execute exactly `NET:PREPARE_GEOMETRY`. This C# native tool will dynamically lock all Booth layers mapped in the dictionary, run flatten on Splines, safely explode structures 3 times, and purge unexplodable junk.
    C. Geometric Migration & Standardization:
       - You MUST execute `NET:APPLY_LAYER_MAPPINGS`. This guarantees native moving of objects according to the user's dictionary.
       - If dynamic geometric guessing is still required for missing entities, use `NET:SELECT_BOOTH_BOXES:Expo_BoothOutline`, `NET:SELECT_COLUMNS:Expo_Column`, and `NET:SELECT_UTILITIES:Expo_View2`.
