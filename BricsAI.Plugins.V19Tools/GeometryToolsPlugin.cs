@@ -258,6 +258,7 @@ namespace BricsAI.Plugins.V19Tools
                     ssetSplines.Select(5, Type.Missing, Type.Missing, new short[] { 0 }, new object[] { "SPLINE" });
                     if (ssetSplines.Count > 0)
                     {
+                        doc.SendCommand("\x03\x03"); // cancel any active commands
                         doc.SendCommand("(if (setq ss (ssget \"_X\" '((0 . \"SPLINE\")))) (sssetfirst nil ss))\n");
                         doc.SendCommand("FLATTEN\n\n\n"); // Extra enter to clear any hidden lines dialogs
                     }
@@ -310,8 +311,8 @@ namespace BricsAI.Plugins.V19Tools
 
                             previousNonStandardCount = currentNonStandardCount;
                             
-                            doc.SendCommand($"(if (setq ss (ssget \"_X\" {whitelistFilter})) (sssetfirst nil ss))\n");
-                            doc.SendCommand("_.EXPLODE\n");
+                            doc.SendCommand("\x03\x03"); // Cancel pending commands to prevent swallowing
+                            doc.SendCommand($"(if (setq ss (ssget \"_X\" {whitelistFilter})) (command \"_.EXPLODE\" ss \"\"))\n");
                             System.Threading.Thread.Sleep(500); // Allow COM queue to catch up
                         }
                         else
@@ -336,8 +337,8 @@ namespace BricsAI.Plugins.V19Tools
                     erasedCount = ssetDel.Count;
                     if (erasedCount > 0)
                     {
-                        doc.SendCommand($"(if (setq ss (ssget \"_X\" {whitelistFilter})) (sssetfirst nil ss))\n");
-                        doc.SendCommand("_.ERASE\n");
+                        doc.SendCommand("\x03\x03"); // clear standard prompt
+                        doc.SendCommand($"(if (setq ss (ssget \"_X\" {whitelistFilter})) (command \"_.ERASE\" ss \"\"))\n");
                         System.Threading.Thread.Sleep(300);
                     }
                     try { ssetDel.Delete(); } catch { }

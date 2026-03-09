@@ -192,7 +192,10 @@ namespace BricsAI.Plugins.V19Tools
                     {
                         if (!string.IsNullOrEmpty(targetLayer))
                         {
-                            try { doc.SendCommand($"(if (setq ss (ssget \"_X\" '((8 . \"{layerName}\")))) (command \"_.CHPROP\" ss \"\" \"_LA\" \"{targetLayer}\" \"\"))\n"); } catch { }
+                            try { 
+                                doc.SendCommand("\x03\x03");
+                                doc.SendCommand($"(if (setq ss (ssget \"_X\" '((8 . \"{layerName}\")))) (command \"_.CHPROP\" ss \"\" \"_LA\" \"{targetLayer}\" \"\"))\n"); 
+                            } catch { }
                             return $"Moved matching objects from '{layerName}' to '{targetLayer}'.";
                         }
                         else
@@ -292,6 +295,7 @@ namespace BricsAI.Plugins.V19Tools
                     string tempPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "_BricsAI_Mappings.lsp");
                     System.IO.File.WriteAllText(tempPath, lispMacro.ToString());
                     string lispPath = tempPath.Replace("\\", "/");
+                    doc.SendCommand("\x03\x03"); // Clear execution line
                     doc.SendCommand($"(load \"{lispPath}\")\n");
                 }
 
@@ -380,6 +384,7 @@ namespace BricsAI.Plugins.V19Tools
                     return $"Found 0 layers starting with '{prefix}'. No deletion necessary.";
                 }
                 // 3. Command line ERASE with wildcard (now guaranteed to hit everything in active spaces)
+                doc.SendCommand("\x03\x03"); 
                 doc.SendCommand($"(if (setq ss (ssget \"_X\" '((8 . \"{prefix}*\")))) (command \"_.ERASE\" ss \"\"))\n");
 
                 // 4. Ultra-Fast In-Process Visual LISP Block Traversal to vaporize nested entities
