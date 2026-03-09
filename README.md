@@ -59,6 +59,8 @@ Once BricsCAD finishes running the Executor's code, the **Validator** steps in. 
 
 The solution operates as a decoupled architecture consisting of a standalone WPF Desktop application running outside the CAD process, communicating directly with BricsCAD via Microsoft Windows Component Object Model (COM) interoperability. 
 
+*For the complete C-Suite and stakeholder architectural breakdown including Mermaid sequence flows and GPT Token ROI logic, please refer to the dedicated **`bricsai_investor_deck.md`** documentation artifact generated in `v3.1.0`.* 
+
 ### Sequence Diagram
 The automation pipeline relies on multiple distinct AI agents to maximize reliability.
 

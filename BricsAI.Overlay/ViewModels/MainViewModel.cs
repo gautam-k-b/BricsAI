@@ -172,6 +172,12 @@ namespace BricsAI.Overlay.ViewModels
                 await _comClient.ConnectAsync();
             }
 
+            // 1. Globally strip Drafter's physical layer locks BEFORE Surveyor or Executor begins
+            if (_comClient.IsConnected)
+            {
+                await Task.Run(() => _comClient.ForceUnlockAllLayersSynchronously());
+            }
+
             string layerMappings = "";
             string projRoot = System.IO.Directory.GetParent(System.AppContext.BaseDirectory)?.Parent?.Parent?.Parent?.FullName ?? System.AppContext.BaseDirectory;
             string mappingPath = Path.Combine(projRoot, "layer_mappings.json");
@@ -254,12 +260,6 @@ namespace BricsAI.Overlay.ViewModels
 
             if (unknownLayers.Any() && !skipMappingReview && isProofingOrMappingRequest)
             {
-                if (_comClient.IsConnected)
-                {
-                    // Globally unlock all layers natively before surveying so we securely access all geometric structures
-                    await Task.Run(() => _comClient.ForceUnlockAllLayersSynchronously());
-                }
-
                 var mapperMsg = new ChatMessage { Role = "Assistant", Content = $"✨ Mapper Agent: Intercepting {unknownLayers.Count} unknown vendor layers. Polling semantics...", IsThinking = true };
                 Messages.Add(mapperMsg);
 

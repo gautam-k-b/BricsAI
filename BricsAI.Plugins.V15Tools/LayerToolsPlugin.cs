@@ -192,7 +192,7 @@ namespace BricsAI.Plugins.V15Tools
                     {
                         if (!string.IsNullOrEmpty(targetLayer))
                         {
-                            try { doc.SendCommand($"(command \"_.CHPROP\" (ssget \"_X\" '((8 . \"{layerName}\"))) \"\" \"_LA\" \"{targetLayer}\" \"\")\n"); } catch { }
+                            try { doc.SendCommand($"(if (setq ss (ssget \"_X\" '((8 . \"{layerName}\")))) (command \"_.CHPROP\" ss \"\" \"_LA\" \"{targetLayer}\" \"\"))\n"); } catch { }
                             return $"Moved matching objects from '{layerName}' to '{targetLayer}'.";
                         }
                         else
@@ -261,6 +261,17 @@ namespace BricsAI.Plugins.V15Tools
         {
             try
             {
+                // Unconditionally strip all locks physically before applying CHPROP mapping loop
+                // to prevent CHPROP from silently dropping locked geometry and desyncing the macro out to the command line
+                try 
+                {
+                    for (int i = 0; i < doc.Layers.Count; i++)
+                    {
+                        try { doc.Layers.Item(i).Lock = false; } catch { }
+                    }
+                } 
+                catch { }
+
                 string projRoot = System.IO.Directory.GetParent(System.AppContext.BaseDirectory)?.Parent?.Parent?.Parent?.FullName ?? System.AppContext.BaseDirectory;
                 string mappingPath = System.IO.Path.Combine(projRoot, "layer_mappings.json");
                 if (!System.IO.File.Exists(mappingPath)) return "Error: layer_mappings.json not found.";
