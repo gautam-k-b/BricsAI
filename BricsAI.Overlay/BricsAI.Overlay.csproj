@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="agent_knowledge.txt">
+    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+  </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BricsAI.Core\BricsAI.Core.csproj" />
+    <ProjectReference Include="..\BricsAI.Plugins.V15Tools\BricsAI.Plugins.V15Tools.csproj" />
+    <ProjectReference Include="..\BricsAI.Plugins.V19Tools\BricsAI.Plugins.V19Tools.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.AI.OpenAI" Version="2.1.0" />
+  </ItemGroup>
+
+</Project>

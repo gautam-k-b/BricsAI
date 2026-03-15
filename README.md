@@ -1,115 +1,212 @@
-# BricsAI - Intelligent CAD Assistant & Multi-Agent Orchestrator
+# BricsAI — Intelligent CAD Assistant & Multi-Agent Orchestrator
+
+BricsAI is an AI-powered multi-agent desktop application that automates complex exhibition CAD workflows directly inside **BricsCAD**. A "Mixture of Experts" LLM pipeline interprets natural-language prompts, extracts geometric relationships from the live drawing, and executes layer migrations, geometry cleanup, and quality-control checks via COM automation — eliminating repetitive drafting labor without ever requiring `NETLOAD` inside the CAD session.
+
+---
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                  BricsAI.Overlay (WPF)                  │
+│  Chat UI · Quick Actions · Mapping Review Dashboard     │
+│                                                         │
+│  MainViewModel ──► Agent Pipeline                       │
+│        │           Surveyor → Mapper → Executor → Validator
+│        │                                                │
+│        └──► ComClient (COM Automation)                  │
+│                  PluginManager                          │
+│                  ├── BricsAI.Plugins.V15Tools           │
+│                  └── BricsAI.Plugins.V19Tools           │
+└─────────────────────────────────────────────────────────┘
+                          │  COM
+                   ┌──────▼──────┐
+                   │  BricsCAD   │
+                   │  V15 / V19  │
+                   └─────────────┘
+```
+
+**Solution Projects**
+
+| Project | Role |
+|---|---|
+| `BricsAI.Overlay` | WPF UI, agent orchestration, COM client |
+| `BricsAI.Core` | `IToolPlugin` interface, `KnowledgeService`, `LoggerService` |
+| `BricsAI.Plugins.V15Tools` | Plugin implementations for BricsCAD V15 |
+| `BricsAI.Plugins.V19Tools` | Plugin implementations for BricsCAD V19 |
+| `BricsAI.TestRunner` | Headless integration test harness |
+| `PluginTester` | Quick manual plugin smoke-tester |
+
+---
+
+## The Four AI Agents
+
+### 1. Surveyor Agent — *The Eyes*
+Runs before anything touches the drawing. Reads the raw layer list from BricsCAD via COM, compares it against the standard A2Z layer table and the persistent learned-mappings knowledge base, and outputs a plain-English summary. Layers that are not standard and not yet learned are tagged `[UNKNOWN]` — one tag per layer, with exact names, so the Mapper can act on them individually.
+
+**Exact-match rule:** A layer is only considered standard if its name matches character-for-character. `Expo_BoothOutline MAX` is not `Expo_BoothOutline`.
+
+### 2. Semantic Mapper Agent — *The Brain*
+When the Surveyor tags unknown layers, the Mapper polls each one for geometric evidence using `NET:POLL_LAYER_SEMANTICS` (entity type counts, block names, text samples), then sends that fingerprint to the LLM to deduce the matching A2Z target layer. It proposes a `NET:LEARN_LAYER_MAPPING:<Source>:<Target>` command for each unknown layer.
+
+**Human-in-the-Loop:** A dedicated `MappingReviewAgent` presents all proposals in the chat as a formatted table and suspends execution. The drafter types a response — *"yes"*, *"change X to Y"*, *"skip and proceed"*, or *"cancel"* — and the system classifies intent (`CONFIRM` / `CORRECT` / `SKIP_AND_PROCEED` / `ABORT`) before deciding what to save and whether to continue proofing.
+
+**Guard:** `NET:LEARN_LAYER_MAPPING` is blocked from executing inside any proofing batch (one that contains `APPLY_LAYER_MAPPINGS`). It is only valid as a direct response to an explicit user instruction.
+
+### 3. Executor Agent — *The Hands*
+Reads the user prompt and the Surveyor's summary and outputs a JSON array of `tool_calls` to run sequentially in BricsCAD. Follows a strict rule set that includes a hardcoded proofing sequence (Rules 7A–7E) and explicit guards against hallucinating commands.
+
+### 4. Validator Agent — *The QA Manager*
+After execution, reviews the transaction log and verifies that the requested operations actually completed. Reports discrepancies back to the chat and, on retry paths, feeds structured feedback to the Executor for a second attempt.
+
+---
+
+## Standard A2Z Target Layers
+
+| Layer | Purpose |
+|---|---|
+| `Expo_BoothOutline` | Polyline boundaries of each exhibitor booth |
+| `Expo_BoothNumber` | Text labels with booth numbers |
+| `Expo_MaxBoothOutline` | Oversized / max-footprint booth outlines |
+| `Expo_MaxBoothNumber` | Text labels for max-footprint booth numbers |
+| `Expo_Building` | Walls, columns, doors, stairs, railings |
+| `Expo_Column` | Structural column markers |
+| `Expo_Markings` | Annotations, dimensions, aisle labels, title blocks |
+| `Expo_View2` | Viewports, print-layout frames, utilities |
+| `Expo_NES` | Non-exhibiting spaces (service areas, restrooms) |
+| `Defpoints` | BricsCAD internal dimension points — never modified |
+| `0` | BricsCAD default layer — never modified |
+
+After a proofing run, `Expo_BoothOutline`, `Expo_BoothNumber`, `Expo_MaxBoothOutline`, and `Expo_MaxBoothNumber` are **locked** via `NET:LOCK_BOOTH_LAYERS` to protect them from subsequent operations.
+
+---
+
+## NET: Command Reference
+
+All plugin capabilities are exposed through `NET:` prefix commands routed by `PluginManager` to the version-appropriate plugin DLL at runtime.
+
+### Layer Tools (`LayerToolsPlugin`)
+
+| Command | Description |
+|---|---|
+| `NET:GET_LAYERS:` | Returns a comma-separated list of all layers in the drawing |
+| `NET:APPLY_LAYER_MAPPINGS` | Moves all objects to their mapped target layers using learned rules in `agent_knowledge.txt` |
+| `NET:RENAME_DELETED_LAYERS` | Renames all non-standard, non-building layers to `Deleted_<originalName>` — marks them as retired without destroying geometry |
+| `NET:DELETE_LAYERS_BY_PREFIX:<prefix>` | Permanently deletes all layers matching the prefix: unlocks, erases entities via LISP ssget + COM Paper_Space pass, then runs LAYDEL + PURGE. **Never used in a proofing sequence — only on explicit user request.** |
+| `NET:ERASE_ENTITIES_ON_LAYER:<name>` | Erases all entities inside a named layer (model space ssget + Paper_Space COM pass). Does not delete the layer itself. |
+| `NET:LOCK_BOOTH_LAYERS` | Locks `Expo_BoothOutline`, `Expo_BoothNumber`, `Expo_MaxBoothOutline`, `Expo_MaxBoothNumber` using exact COM layer name lookup |
+| `NET:UNLOCK_LAYERS_BY_PREFIX:<prefix>` | Unlocks all layers whose names start with the given prefix |
+| `NET:POLL_LAYER_SEMANTICS:<name>` | Returns a JSON object with entity type counts, block names, and text samples for the named layer — used by the Mapper for semantic deduction |
+| `NET:LEARN_LAYER_MAPPING:<source>:<target>` | Saves a permanent mapping rule to `agent_knowledge.txt` via `KnowledgeService` |
+| `NET:SELECT_LAYER:<source>:<target>` | Moves all objects on the source layer to the target layer via COM |
+| `NET:SELECT_OUTER:<layer>` | Selects the geometrically outermost closed polyline on a layer |
+| `NET:SELECT_INNER:<layer>` | Selects inner closed polylines on a layer |
+
+### Geometry Tools (`GeometryToolsPlugin`)
+
+| Command | Description |
+|---|---|
+| `NET:PREPARE_GEOMETRY` | Multi-pass recursive explosion pipeline: 9 global wipe cycles targeting all entity types not in the whitelist (Arc, Line, Circle, Ellipse, LWPolyline, Text, Solid), followed by deep block-dictionary traversal to erase nested geometry |
+| `NET:SELECT_BOOTH_BOXES:<layer>` | Selects closed polylines on the named layer; used in proofing to highlight or move booth outlines |
+| `NET:SELECT_EMPTY_BOOTHS:<targetLayer>` | Moves unnumbered booth outlines (outlines with no booth number text inside their polygon boundary) to the specified target layer; uses COM selection sets + ray-casting point-in-polygon |
+| `NET:COUNT_EMPTY_BOOTHS` | **Read-only audit.** Counts booth outlines in `Expo_BoothOutline` that have no corresponding `Expo_BoothNumber` text inside them. Works on locked layers by using temporary unlocked COM selection sets. Returns: total outline count, text count, booths without a number, booths with a number |
+| `NET:SELECT_COLUMNS:<layer>` | Selects column-like structural features on the named layer |
+| `NET:SELECT_UTILITIES:<layer>` | Selects utility / viewport entities on the named layer |
+
+---
+
+## Standard Proofing Sequence (Rule 7A–7E)
+
+When asked to proof a drawing the Executor always generates exactly this sequence — no additions, no substitutions:
+
+```
+A. NET:PREPARE_GEOMETRY
+     ↓ recursive explosion, junk purge
+B. NET:APPLY_LAYER_MAPPINGS
+     ↓ migrate all vendor objects to A2Z layers
+   [optional] NET:SELECT_BOOTH_BOXES, NET:SELECT_COLUMNS, NET:SELECT_UTILITIES
+     ↓
+C. (c:a2zcolor)
+     ↓ enforce standard colors and lineweights
+D. (command "-PURGE" "All" "*" "N")
+     + NET:RENAME_DELETED_LAYERS
+     ↓ retire any remaining unmapped layers as Deleted_
+E. NET:LOCK_BOOTH_LAYERS
+     ↓ lock the four final booth layers
+```
+
+**ComClient proofing guards** enforce this sequence at the C# level regardless of what the LLM generates:
+- If `APPLY_LAYER_MAPPINGS` runs but `RENAME_DELETED_LAYERS` is absent → auto-appended after the batch
+- If `APPLY_LAYER_MAPPINGS` runs but `LOCK_BOOTH_LAYERS` is absent → auto-appended after the batch
+- `LEARN_LAYER_MAPPING` inside a proofing batch → silently skipped and logged as `GUARD`
+- `DELETE_LAYERS_BY_PREFIX` immediately after `RENAME_DELETED_LAYERS` in the same batch → blocked
+
+---
+
+## Persistent Layer Knowledge (`agent_knowledge.txt`)
+
+Mappings and rules are stored in `agent_knowledge.txt` next to the executable and read at runtime by `KnowledgeService.GetLearnings()` / `GetLayerMappingsDictionary()`. Both Surveyor and Executor prompts inject the full learned-rules block at call time, so the AI always sees the current state without recompilation.
+
+Format:
+```
+[2026-03-12 22:11:25] Map the layer 'show_exhibit' to standard layer 'Expo_BoothOutline'.
+[2026-03-12 22:11:25] Map the layer 'bldg_walls' to standard layer 'Expo_Building'.
+[2026-03-12 23:32:30] If I ask to delete any layer and if it is locked, first unlock it and then delete it.
+```
+
+---
+
+## UI Components
+
+### Quick Actions Sidebar
+
+| Button | What it does |
+|---|---|
+| **Run Full AI Proofing** | Fires the complete 5-step proofing sequence (A–E above) via natural language. Triggers the Surveyor → Mapper (with human review) → Executor → Validator pipeline. |
+| **Clean Geometry** | Fast-path: unlocks all layers, runs RENAME_DELETED_LAYERS, then DELETE_LAYERS_BY_PREFIX to permanently remove all `Deleted_` layers, followed by multi-pass PURGE. Shows elapsed time on completion. |
+| **Generate Summary** | Read-only audit: Surveyor enumerates layers and entity counts, Executor is instructed not to modify the drawing. |
+
+### Chat Feed
+- Real-time streaming of agent steps via `IProgress<string>` into live chat bubbles
+- Performance footer after each run: token count (total / input / output), elapsed time
+- Mapping review mode: pauses proofing and displays a formatted proposal table for human approval
+
+---
+
+## Layer Lifecycle
+
+```
+Vendor state:          "show_exhibit", "bldg_walls", "custom_A"
+          │
+          ▼  (Mapper + APPLY_LAYER_MAPPINGS)
+Proofed state:         Expo_BoothOutline, Expo_Building, ...
+          │
+          ▼  (RENAME_DELETED_LAYERS — for any unmapped remainder)
+Retired state:         Deleted_custom_A
+          │
+          ▼  (DELETE_LAYERS_BY_PREFIX — explicit user request only)
+Removed state:         (layer gone)
+```
+
+---
+
+## Setup & Configuration
+
+### Prerequisites
+- BricsCAD V15 or V19 (COM automation must be enabled)
+- .NET 9.0 SDK
+- An active OpenAI API key
+
+### Running
+1. Add your OpenAI key to `BricsAI.Overlay/appsettings.json`
+2. Build: `dotnet build BricsAI.sln -c Release` or run `build.bat`
+3. Launch BricsCAD
+4. Run `BricsAI.Overlay.exe` — the overlay connects to the active BricsCAD instance automatically via COM
+
+### Security
+`appsettings.json` contains your API key. Do not commit it to source control. Rotate immediately if it is ever exposed.
+
 
 BricsAI is an advanced, AI-powered multi-agent desktop application designed to orchestrate and execute complex workflow automation directly within **BricsCAD**. By leveraging a "Mixture of Experts" LLM pipeline, the application interprets user intent, programmatically extracts geometric relationships, and natively manipulates CAD layers and entities via COM automation to eliminate repetitive drafting labor.
 
 ---
-
-## 🚀 Key Features & UI Dashboard
-
-The standalone BricsAI WPF Overlay floats near the BricsCAD instance, providing a rich, interactive Dashboard for rapid automation.
-
-![BricsAI Architecture Agent Interface](https://kroki.io/mermaid/svg/eNp9ks9OwzAMxu88hbUDfw6DF4BJIStSpZVVdHSHaIestUqgjaskHUPqw5NmYyA2qJREcj9__tlJZWT7AovpGfjv2aK5FMO-uoLxeAI9r1XxZuHiqdPAOkeNdIr0BTzHvV8ikUovlS7p_Xormxpu12YCy_QBUoMWtQvqVfAOm-3WVSg4mpviBa0zQQELhWYUFAEjDsXzJPjnCt8TKnHvzolMqbR0ZFaHjDwJGRkTWWc2-EEGWOXrHykiJqItFr6TvxQ5E7msVSn_lsxmifArQ7NRBe6w5i1qFgNL4295xmB8vdMfYtGJWP4rhro8NbId-DCuc1gQ1fbX2PZ0nAtOjb84j75ji7VDQy0kUssKf4wtTURad5XSX38Ggz7Wr1g4Cy7UUNoRtIaa1tne4x-SOQ_U_RNaqjdo4TFa-NtpGqlLr0z_7eXeqMJyNvUPhQq0dvTT9u5u0vN5Ajcwi7N0OOQHGu95z8UhcUpF1wwtztcD7uqIK9r61zX0wcn3v3W9v48vpE-BKtde)
-
-### UI Components & Functionality
-
-#### **Quick Actions Sidebar**
-Pre-programmed shortcuts that instantly inject optimized macro-prompts into the Multi-Agent engine over the chat interface.
-
-- **🤖 Run Full AI Proofing**
-  - **Functionality:** Initiates the complete standard 6-step Exhibition Proofing sequence.
-  - **Under the hood:** Preemptively creates standardized `Expo_` layers, performs targeted block explosions, explicitly migrates `outlines` and objects to their respective final presentation states natively via COM without relying on unreliable LISP geometric selections.
-  
-- **🧹 Clean Geometry**
-  - **Functionality:** A fast-action macro to obliterate drawing garbage.
-  - **Under the hood:** Triggers a targeted sequence that renames and targets vendor layers via `NET:RENAME_DELETED_LAYERS` / `NET:DELETE_LAYERS_BY_PREFIX`, aggressively unlocks protected layers over COM, and then uses license-safe `_.ERASE` plus multi-pass `-PURGE` and Visual LISP deep block traversal to vaporize empty vendor structures without relying on Express Tools `-LAYDEL`.
-
-- **📊 Generate Summary**
-  - **Functionality:** A safe, read-only audit mechanism.
-  - **Under the hood:** Commands the Executor Agent *not* to manipulate the drawing. Given the raw Surveyor data, it simply reads back a generated Bill of Materials or object count summary, enabling you to inspect drawings without risking geometric corruption.
-
-#### **Chat Feed & Input Area**
-- **Chat Window:** Displays the real-time reasoning logs as the request cascades from the *Surveyor* -> *Mapper* -> *Executor* -> *Validator* agents.
-- **Input Text Box:** A standard natural language input field where ad-hoc tasks or complex logical operations (e.g., "Find the largest box and move it to Layer Frame") can be requested outside the Quick Actions.
-- **Interactive Prompts:** If the AI discovers unknown vendor layers, the Chat Window morphs into an interactive Review Dashboard, allowing the drafter to approve, reject, or contextually converse with the AI to refine mapping proposals before execution proceeds.
-
----
-
-## 🤖 Meet the AI Agents (How it Works)
-
-BricsAI doesn't just use one AI; it uses a team of three specialized virtual assistants that talk to each other to make sure your drawing is handled safely and perfectly.
-
-![Diagram](https://kroki.io/mermaid/svg/eNqFkc1KAzEUhfd9igtuKlisluJYS6F_guCqUytSXKSZm05onJQkYy3MwhcoorhRF-LORxB8G1_APoJppn8WxCyGZHLvd849YUKOaEiUgdNWBuw606iy3enr_fvX7WT6-vAJFzK-3IZcrpLUBacDqMXGyCgB39W7j457fUWGIbRDhJriVFdPoI3kyt36Fvc4AT9W1ziWCqp9jEy5pyplXmkhCTQY29ZQZMSjfnmXVy6dmo-RvRJkjAoCYkgCze7X89P3xx00b5DGZgN1rrjBlFWXATqQ02-u4Ww9KmIwAGprktRsvdroZhe77bRpcVzrRafKZQRC9hPo2LFe3mZ2OkRw63DDTz1EOkj9nEs1WPmxsFV0HSfQwqFURtuMKEWtd48JF7Gy_mbPkXGFVBCtG8hs2PMcGReitIV7rMhwRxslB1jayu97XrA3P-ZGPDBhaX94c_SbgYsAUwZjrID5JYMVD2g-_x_jejn13IjHini4hBQ8Dwv0D8iKBP5yoDW-fbOFxfW_nZXo0Q8eCOrt)
-
-### 1. 🔍 The Surveyor (The Eyes)
-Before BricsAI touches anything, the **Surveyor** evaluates your current drawing. It strictly enumerates all visible and invisible layer structures. It extracts raw CAD data into plain English (e.g., *"I see 45 booth outlines on a layer called 'outlines'"*) so the rest of the team understands what they are working with.
-
-### 2. 🧠 The Semantic Mapper (The Brain)
-If the Surveyor detects unrecognized event-specifc vendor layers, it automatically halts the pipeline and wakes up the **Mapper**. The Mapper physically polls the geometry on the unknown layer, deducing structural intent (e.g., "This layer has exactly 42 blocks and 42 text entities, it's a Booth layer"). It then builds a `layer_mappings.json` proposal.
-- **Human-in-the-Loop:** At this stage, a dedicated `MappingReviewAgent` pauses the sequence and asks the user for confirmation in the chat UI. The user can type *"looks good"* or *"change layer X to Y"*.
-
-### 3. ⚙️ The Executor (The Hands)
-The **Executor** is the workhorse. It takes your request (e.g., "Clean the geometry") and pairs it with the Surveyor's report and the Mapper's confirmed dictionary. It then acts like a master programmer, instantly writing a massive list of highly specific CAD commands, locking critical booth geometries, targeting exact layers, and firing them directly into BricsCAD.
-
-### 4. 🛡️ The Validator (The QA Manager)
-Once BricsCAD finishes running the Executor's code, the **Validator** steps in. It reviews the deep logs generated by BricsCAD to verify that the Executor *actually* did what you asked it to do. If a layer failed to delete or a selection missed, the Validator catches it and reports back to you in the chat!
-
----
-
-## 🏗️ Technical Architecture (HLD)
-
-The solution operates as a decoupled architecture consisting of a standalone WPF Desktop application running outside the CAD process, communicating directly with BricsCAD via Microsoft Windows Component Object Model (COM) interoperability. 
-
-*For the complete C-Suite and stakeholder architectural breakdown including Mermaid sequence flows and GPT Token ROI logic, please refer to the dedicated **`bricsai_investor_deck.md`** documentation artifact generated in `v3.1.0`.* 
-
-### Sequence Diagram
-The automation pipeline relies on multiple distinct AI agents to maximize reliability.
-
-![Diagram](https://kroki.io/mermaid/svg/eNqFVE2TEjEQvfsr-shW7cedsqjCwbWwFlbB5WJ56M30DtGQxCSA491_4a_zl9hJZgZ2B5QLw6Tf636vX_D0fUta0ERi5XDzCvhj0QUppEUd4MGT670sjHGl1BiMA_TwMIUbmKHUK0n7mSlJ9RDLrdtRncu753FFfDQYTy969W9_kNg29N3zP-oLsymUjMcMeOOk8MV4AsX9DKY6kDO2h1ihkmWr4PDjqEeCRP1Xo9GR4iFwJ_HNw8ctf8FYBGk0MDTUljxI7qdDwh6BEkUz4hAW0XQfYOJwL3UFy4CBGkhTdPWy6QL3uQ4mGBAGd1iT85dAQVxnP070bK0ewlijqn9SYhj7WotBeszIuWFasyMHB0DyzToKHnhKiHaq2BI0bsi_fnQjVmpAmUoKVOBpw65KAcJwmmzw14m55evJWbb1XRoWZI0L55S0IRjCO9LkePQZCmd81pKxl2loHV6KOmDZXrsNvCVKr-LiLIa1B9QlVA1xEoewQe_ljuD98n4O6BzWYJ4gGKOABatGYMvdE_g5A5t4fFCo4cs5cUfRyHyUYVlcxGZJyhgLt-wVoVgfRklnz9PzjHOOgYWoGgpHMUCf0FUUICfoJLi9QXFPuuQTXlY5uIgpN49frxOSDbKW05sIuOo_-Z1QQKmobBRGU-5M5c9Z0t3IYXs5qQNmWyI629LV9pr--f0LVuTkE2c074GXyjPcwG0a5kTjeOF5Wuktx51D6bcq8KWOf3LFGsNfQPe-QQ==)
-
----
-
-## 🧩 Key Technical Implementations
-
-1. **Native COM Layer Migration (`NET:SELECT_LAYER:<source>:<target>`):**
-   - The application bypasses unreliable LISP `ssget` selections which risk "bleed-over" between commands.
-   - Using the custom tool structure, the Executor Agent forces the C# host to natively create target layers implicitly and assign objects programmatically ($Area$ boundaries, $LWPOLYLINE$ closure checks, and direct `.Layer` assignments).
-
-2. **Exhaustive Geometry Preparation Pipeline:**
-   - The `NET:PREPARE_GEOMETRY` tool forces a proactive 30-pass recursive mathematical blast over all objects in a drawing. It explicitly targets complex and 3D geometry (Dimensions, Hatches, Splines, Polyface Meshes) while protecting 2D primitive boundaries via a strict whitelist filter (`Arc`, `Line`, `Circle`, `Ellipse`, `LWPolyline`, `Solid`, `Text`).
-   - All legacy non-explodable entities are instantly swept and explicit vendor booth layers are automatically locked before the sequence begins to preserve geometric integrity.
-
-3. **Defensive LISP Execution Runtime:**
-   - The Agent system prompt strictly forbids bare `ssget` queries, aggressively forcing the LLM to wrap all `(command)` executions in defensive `(if (setq ss (ssget...)))` LISP blocks to guarantee the BricsCAD COM engine never deadlocks or hangs waiting for mouse input on empty queries.
-
-4. **Pluggable Capabilities Architecture:**
-   - Instead of monolithic updates to the AI's core capabilities, tools are implemented via the `IToolPlugin` interface (e.g. `LayerToolsPlugin.cs` and `GeometryToolsPlugin.cs`).
-   - The `PluginManager` dynamically reads the user's active BricsCAD version (V15 vs V19) via COM reflection and loads the correct compiled .NET DLL execution binary on the fly.
-
-5. **Live Chat Telemetry & Token Metrics:**
-   - Instead of locking the WPF interface while the background Agent script runs, BricsAI utilizes an `IProgress<string>` asynchronous callback stream. Users can watch the AI's step-by-step progress, LISP errors, and `NET:MESSAGE:` returns populate directly in the active chat bubble line-by-line in real time.
-   - A highly accurate `totalTokens` tracking system spans across the Multi-Agent cascade, printing the final API token consumption rate directly to the dashboard upon task completion or Surveyor abort.
-
-6. **Interactive Configurable Layer Mappings:**
-   - To handle unpredictable layer naming conventions from external vendors, BricsAI maintains a `layer_mappings.json` file in the root directory.
-   - The Semantic Mapper and Surveyor natively prioritize these explicit mappings over geometric guesswork. If a vendor arbitrarily changes their CAD template next year, the Drafter simply engages the MappingReviewAgent naturally in the chat to teach the system the new semantic relationships for future automation runs.
-
-7. **Proactive Global Unlocking & Mathematical Heuristics:**
-   - **Hardware Unlocking:** To prevent polling failures, BricsAI executes an instant C# COM loop (`ForceUnlockAllLayersSynchronously`) the microsecond before observing the file, stripping manual Drafter locks so the AI can securely see the active geometry.
-   - **Booth Geometric Protection:** The AI features a hardcoded geometric heuristic that inherently locks any layer syntactically containing `boothoutline` or `boothnumber` (while explicitly excluding variations of `max`), forcefully shielding them from the automated Multi-Pass Geometry Pulverizer.
-
-![Diagram](https://kroki.io/mermaid/svg/eNpLy8kvT85ILCpRCHHhUgCC0OLUIo3oD_MnrnjU0Pth_qTdYJFYTQVdXbsa15TMkuIaBa9gf7_onMTK1KL43MSCgsy89GK9rOL8vFiwCSBZsGqf_MSU1BSFpMoahVDPaLBZ4QFuCv5FyRmpxSVFiSX5RRAdoZ5g9Z55WanJJcUKzvl5JakVJTUKwaVFZamV-UVAvVN64TwFx_TUvBL8Ol0rUpNLgeZHP5o18_2OfjgfWS_cPF09oBEBRZn5RZklmVWpxQq-UE8hzAFrgBsCDgowB6jYJbMIaLeCc2Ix0F6noszkYmdHl2gNGEvBBxROxZoQO8FEcUllTiokmNIyc3KslNMs04zSTHSAYZKfnWqlnGxuZGqSCgDh65BX)
-
----
-
-## 🛠️ Setup & Configuration
-
-### Prerequisites
-- BricsCAD (V15 or newer recommended).
-- .NET 9.0 SDK installed on the workstation.
-- An Active OpenAI API Key.
-
-### Running the Application
-1. Configure `BricsAI.Overlay/appsettings.json` with your OpenAI Key.
-2. Build the `BricsAI.sln` project via Visual Studio or `build.bat`.
-3. Launch BricsCAD manually.
-4. Run `BricsAI.Overlay.exe` to spawn the multi-agent UI overlay over BricsCAD.
