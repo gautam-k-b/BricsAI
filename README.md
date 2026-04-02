@@ -1,4 +1,5 @@
 # BricsAI — Intelligent CAD Assistant & Multi-Agent Orchestrator
+**v3.3.0** | .NET 9 · WPF · BricsCAD V15/V19 · Azure OpenAI
 
 BricsAI is an AI-powered multi-agent desktop application that automates complex exhibition CAD workflows directly inside **BricsCAD**. A "Mixture of Experts" LLM pipeline interprets natural-language prompts, extracts geometric relationships from the live drawing, and executes layer migrations, geometry cleanup, and quality-control checks via COM automation — eliminating repetitive drafting labor without ever requiring `NETLOAD` inside the CAD session.
 
@@ -47,9 +48,15 @@ Runs before anything touches the drawing. Reads the raw layer list from BricsCAD
 **Exact-match rule:** A layer is only considered standard if its name matches character-for-character. `Expo_BoothOutline MAX` is not `Expo_BoothOutline`.
 
 ### 2. Semantic Mapper Agent — *The Brain*
-When the Surveyor tags unknown layers, the Mapper polls each one for geometric evidence using `NET:POLL_LAYER_SEMANTICS` (entity type counts, block names, text samples), then sends that fingerprint to the LLM to deduce the matching A2Z target layer. It proposes a `NET:LEARN_LAYER_MAPPING:<Source>:<Target>` command for each unknown layer.
+When the Surveyor tags unknown layers, the Mapper runs a two-phase pipeline:
 
-**Human-in-the-Loop:** A dedicated `MappingReviewAgent` presents all proposals in the chat as a formatted table and suspends execution. The drafter types a response — *"yes"*, *"change X to Y"*, *"skip and proceed"*, or *"cancel"* — and the system classifies intent (`CONFIRM` / `CORRECT` / `SKIP_AND_PROCEED` / `ABORT`) before deciding what to save and whether to continue proofing.
+**Phase 1 — Name Classification (`ClassifyByNameAsync`):** All unknown layer names are sent in a single LLM call. Layers with recognisable names are classified immediately; ambiguous names are flagged `UNCERTAIN`.
+
+**Phase 2 — Geometry Batch (`BatchDeduceByGeometryAsync`):** Only `UNCERTAIN` layers are polled via `NET:POLL_LAYER_SEMANTICS` (entity type counts, block names, text samples). All footprints are then sent in one batched LLM call. The LLM returns a `{ "mappings": [...] }` JSON object covering every uncertain layer at once.
+
+This reduces 100-layer drawings from ~100 LLM round-trips (~5 min) to 2 LLM calls (~36 sec).
+
+**Human-in-the-Loop Review:** A dedicated `MappingReviewAgent` presents proposals **one at a time** in chat. Each proposal shows the source layer, proposed A2Z target, and a plain-English LLM-generated reason sentence. The drafter responds naturally — *"yes"*, *"skip"*, *"change X to Y"*, or *"abort"* — and `ClassifySingleMappingResponseAsync` classifies the intent as `ACCEPT`, `SKIP`, or `ABORT`. Accepted mappings are persisted via `NET:LEARN_LAYER_MAPPING`; skipped ones are bypassed; `ABORT` halts review and preserves all previously accepted mappings.
 
 **Guard:** `NET:LEARN_LAYER_MAPPING` is blocked from executing inside any proofing batch (one that contains `APPLY_LAYER_MAPPINGS`). It is only valid as a direct response to an explicit user instruction.
 
@@ -115,13 +122,15 @@ All plugin capabilities are exposed through `NET:` prefix commands routed by `Pl
 
 ---
 
-## Standard Proofing Sequence (Rule 7A–7E)
+## Standard Proofing Sequence (Rule 0–D)
 
 When asked to proof a drawing the Executor always generates exactly this sequence — no additions, no substitutions:
 
 ```
+0. NET:LOCK_BOOTH_LAYERS
+     ↓ protect booth layers FIRST, before any geometry operations
 A. NET:PREPARE_GEOMETRY
-     ↓ recursive explosion, junk purge
+     ↓ recursive explosion, junk purge (booth layers untouched — they're locked)
 B. NET:APPLY_LAYER_MAPPINGS
      ↓ migrate all vendor objects to A2Z layers
    [optional] NET:SELECT_BOOTH_BOXES, NET:SELECT_COLUMNS, NET:SELECT_UTILITIES
@@ -131,13 +140,11 @@ C. (c:a2zcolor)
 D. (command "-PURGE" "All" "*" "N")
      + NET:RENAME_DELETED_LAYERS
      ↓ retire any remaining unmapped layers as Deleted_
-E. NET:LOCK_BOOTH_LAYERS
-     ↓ lock the four final booth layers
 ```
 
 **ComClient proofing guards** enforce this sequence at the C# level regardless of what the LLM generates:
+- If `APPLY_LAYER_MAPPINGS` appears without a preceding `LOCK_BOOTH_LAYERS` → auto-prepend lock at the start
 - If `APPLY_LAYER_MAPPINGS` runs but `RENAME_DELETED_LAYERS` is absent → auto-appended after the batch
-- If `APPLY_LAYER_MAPPINGS` runs but `LOCK_BOOTH_LAYERS` is absent → auto-appended after the batch
 - `LEARN_LAYER_MAPPING` inside a proofing batch → silently skipped and logged as `GUARD`
 - `DELETE_LAYERS_BY_PREFIX` immediately after `RENAME_DELETED_LAYERS` in the same batch → blocked
 
@@ -166,10 +173,12 @@ Format:
 | **Clean Geometry** | Fast-path: unlocks all layers, runs RENAME_DELETED_LAYERS, then DELETE_LAYERS_BY_PREFIX to permanently remove all `Deleted_` layers, followed by multi-pass PURGE. Shows elapsed time on completion. |
 | **Generate Summary** | Read-only audit: Surveyor enumerates layers and entity counts, Executor is instructed not to modify the drawing. |
 
+> **Note:** All three Quick Action buttons are bound to `IsQuickActionsEnabled` (`!IsBusy && !_isInOneByOneMappingReview`). They are disabled for the entire duration of a one-by-one mapping review session to prevent accidental re-triggers. Only the chat **Send** button remains active so the drafter can respond to proposals.
+
 ### Chat Feed
 - Real-time streaming of agent steps via `IProgress<string>` into live chat bubbles
-- Performance footer after each run: token count (total / input / output), elapsed time
-- Mapping review mode: pauses proofing and displays a formatted proposal table for human approval
+- Performance summary (token total / input / output, elapsed time) displayed **before** the first mapping proposal
+- One-by-one mapping review mode: each proposal includes a plain-English LLM-generated reason sentence; drafter responds per proposal with ACCEPT / SKIP / ABORT
 
 ---
 
@@ -187,6 +196,18 @@ Retired state:         Deleted_custom_A
           ▼  (DELETE_LAYERS_BY_PREFIX — explicit user request only)
 Removed state:         (layer gone)
 ```
+
+---
+
+## Performance & Cost
+
+| Scenario | Before v3.3.0 | v3.3.0+ |
+|---|---|---|
+| Mapping 100 unknown layers | ~100 LLM calls, ~5 min | 2 LLM calls, ~36 sec |
+| Prompt cache hit rate | Low (dynamic content mid-prompt) | High (dynamic content at bottom, stable prefix ≥ 1024 tokens) |
+| Typical proofing cost | < $0.02 per run | < $0.02 per run (reduced further by cache discount) |
+
+OpenAI prompt caching (50% input-token discount) is automatically applied to prefixes ≥ 1,024 tokens. Both `SurveyorAgent` and `ExecutorAgent` keep all dynamic content (`KnowledgeService.GetLearnings()`) at the **bottom** of their system prompts to maximise the stable cacheable prefix.
 
 ---
 

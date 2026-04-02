@@ -116,22 +116,6 @@ namespace BricsAI.Overlay.Services
             });
         }
 
-        public void ForceUnlockAllLayersSynchronously()
-        {
-            try
-            {
-                if (_acadApp?.ActiveDocument?.Layers != null)
-                {
-                    var layers = _acadApp.ActiveDocument.Layers;
-                    for (int i = 0; i < layers.Count; i++)
-                    {
-                        try { layers.Item(i).Lock = false; } catch { }
-                    }
-                }
-            }
-            catch { }
-        }
-
         public void ForceUnlockAllLayersExceptBoothLayersSynchronously()
         {
             try
@@ -235,6 +219,24 @@ namespace BricsAI.Overlay.Services
                             if (scanCombined.Contains("LOCK_BOOTH_LAYERS"))     batchHasLockBooth = true;
                         }
 
+                        // Proofing pre-guard: if this is a proofing batch but LOCK_BOOTH_LAYERS is missing,
+                        // execute it FIRST (before PREPARE_GEOMETRY) to protect booth layers throughout the sequence.
+                        if (batchHasApplyLayerMappings && !batchHasLockBooth && _acadApp?.ActiveDocument != null)
+                        {
+                            string guardMsg = $"PROOFING GUARD: NET:LOCK_BOOTH_LAYERS was missing from plan — executing at the START to protect booth layers.";
+                            progress?.Report($"⚠️ {guardMsg}");
+                            BricsAI.Core.LoggerService.LogTransaction("GUARD", guardMsg);
+                            var lockPlugin = _pluginManager.GetPluginForCommand("NET:LOCK_BOOTH_LAYERS", MajorVersion);
+                            if (lockPlugin != null)
+                            {
+                                string lockResult = lockPlugin.Execute(_acadApp!.ActiveDocument, "NET:LOCK_BOOTH_LAYERS");
+                                BricsAI.Core.LoggerService.LogComResponse(lockResult);
+                                results.Add($"Step {step++} [AUTO]: {lockResult}");
+                                progress?.Report($"✅ {lockResult}\n");
+                                batchHasLockBooth = true;
+                            }
+                        }
+
                         foreach (var tool in tools.EnumerateArray())
                         {
                             string? lispCode = tool.TryGetProperty("lisp_code", out var lisp) ? lisp.GetString() : null;
@@ -331,7 +333,8 @@ namespace BricsAI.Overlay.Services
                         }
 
                         // Proofing completeness guard: if this was a proofing batch (contained APPLY_LAYER_MAPPINGS)
-                        // and the AI omitted the mandatory final steps, append them now.
+                        // and the AI omitted the mandatory RENAME_DELETED_LAYERS, append it now at the end.
+                        // (LOCK_BOOTH_LAYERS is now executed at the START via the pre-guard above.)
                         if (batchHasApplyLayerMappings && _acadApp?.ActiveDocument != null)
                         {
                             if (!batchHasRenameDeleted && !renameDeletedRanThisBatch)
@@ -348,21 +351,6 @@ namespace BricsAI.Overlay.Services
                                     progress?.Report($"✅ {renameResult}\n");
                                     renameDeletedRanThisBatch = true;
                                     batchHasRenameDeleted = true;
-                                }
-                            }
-
-                            if (!batchHasLockBooth)
-                            {
-                                string guardMsg = $"PROOFING GUARD: NET:LOCK_BOOTH_LAYERS was missing from plan — executing now.";
-                                progress?.Report($"⚠️ {guardMsg}");
-                                BricsAI.Core.LoggerService.LogTransaction("GUARD", guardMsg);
-                                var lockPlugin = _pluginManager.GetPluginForCommand("NET:LOCK_BOOTH_LAYERS", MajorVersion);
-                                if (lockPlugin != null)
-                                {
-                                    string lockResult = lockPlugin.Execute(_acadApp!.ActiveDocument, "NET:LOCK_BOOTH_LAYERS");
-                                    BricsAI.Core.LoggerService.LogComResponse(lockResult);
-                                    results.Add($"Step {step++} [AUTO]: {lockResult}");
-                                    progress?.Report($"✅ {lockResult}\n");
                                 }
                             }
                         }

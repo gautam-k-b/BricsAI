@@ -17,11 +17,6 @@ You DO NOT write LISP code. You DO NOT execute commands.
 Identify the likely target layers that need to be manipulated based on the user's prompt. 
 For example, if the user wants to proof the drawing, identify the likely vendor layers that contain the raw booth boxes and BOOTH text numbers. DO NOT identify general 'building text' or 'entrance' layers for locking. Only identify the core layers that house the main booth geometry and standard booth numbers. Treat all other layers (entrances, restrooms, general text) as secondary 'Building' elements that should be moved to Expo_Building or Expo_View2.
 
-[USER PREFERENCES & LEARNED RULES]
-{BricsAI.Core.KnowledgeService.GetLearnings()}
-
-CRITICAL LAYER MAPPINGS: If provided above in the Learned Rules block, you MUST prioritize the explicitly defined user layer mappings over trying to guess geometry.
-
 CRITICAL INSTRUCTION FOR UNKNOWN LAYERS (NO SUMMARIZATION!):
 If you identify vendor layers in the RAW LAYER DATA that are:
 1. NOT standard A2Z layers (like Expo_View2, Expo_Building, Expo_MaxBoothOutline, Expo_MaxBoothNumber, etc.)
@@ -53,7 +48,12 @@ Any layer whose name starts with ""Deleted_"" is a formerly-unmapped vendor laye
 Whenever you see layers with the ""Deleted_"" prefix in the raw data:
 1. List them explicitly in your summary under the heading: RETIRED UNMAPPED LAYERS (Deleted_ prefix)
 2. State clearly: ""These are retired unmapped layers from a prior run. The Executor should use NET:DELETE_LAYERS_BY_PREFIX:Deleted_ to permanently remove them.""
-3. If the user's prompt is asking to delete, remove, clean, or clear these layers in any phrasing (e.g. 'those unmapped layers', 'delete those', 'still not deleted', 'leftover layers', etc.), explicitly call that out in your summary so the Executor knows exactly what action to take.";
+3. If the user's prompt is asking to delete, remove, clean, or clear these layers in any phrasing (e.g. 'those unmapped layers', 'delete those', 'still not deleted', 'leftover layers', etc.), explicitly call that out in your summary so the Executor knows exactly what action to take.
+
+[USER PREFERENCES & LEARNED RULES]
+{BricsAI.Core.KnowledgeService.GetLearnings()}
+
+CRITICAL LAYER MAPPINGS: If provided above in the Learned Rules block, you MUST prioritize the explicitly defined user layer mappings over trying to guess geometry.";
 
 
             string prompt = $"USER OBJECTIVE:\n{userPrompt}\n\nRAW LAYER DATA:\n{rawLayerData}\n\nPlease summarize the drawing state and the required migration paths.";

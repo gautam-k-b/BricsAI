@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 
 namespace BricsAI.Overlay.Services.Agents
@@ -7,6 +9,67 @@ namespace BricsAI.Overlay.Services.Agents
         public MappingReviewAgent()
         {
             Name = "MappingReviewAgent";
+        }
+
+        /// <summary>
+        /// Classifies user response to a single mapping proposal.
+        /// Returns: ACCEPT, SKIP, or ABORT
+        /// </summary>
+        public async Task<string> ClassifySingleMappingResponseAsync(string userResponse, string sourceLayer, string proposedTarget)
+        {
+            string systemPrompt = $@"You are the Mapping Review Classifier for BricsAI.
+The system has shown the user a SINGLE layer mapping proposal and is waiting for their response.
+
+The proposed mapping is: Map '{sourceLayer}' to '{proposedTarget}'
+
+Your ONLY job is to read the user's response and classify their intent into exactly ONE of the following three keywords:
+
+[KEYWORDS]
+ACCEPT
+SKIP
+ABORT
+
+[DEFINITIONS]
+ACCEPT: The user agrees with this specific mapping and wants to save it and move to the next. Examples: 'yes', 'looks good', 'that's correct', 'sure', 'go ahead', 'perfect', 'agree', 'yep', 'ok', 'fine', 'proceed', 'next', 'accepted', 'good mapping'.
+SKIP: The user wants to skip THIS mapping only (do not save it) and move to the next proposal. They still want to continue reviewing other mappings. Examples: 'no', 'skip', 'skip this', 'not needed', 'not this one', 'next please', 'wrong', 'that's not right', 'try another', 'pass', 'ignore this one'.
+ABORT: The user wants to stop reviewing mappings entirely and stop the whole proofing process. They are cancelling everything, not just this mapping. Examples: 'stop', 'cancel', 'abort', 'nevermind', 'forget it', 'don't continue', 'quit', 'stop reviewing', 'no more mappings', 'cancel everything'.
+
+CRITICAL RULE: Only return ABORT if the user explicitly says stop/cancel/abort/quit. SKIP is for skipping just this one mapping.
+
+You MUST output strictly one of these three exact words. Do not output any other text.";
+
+            string prompt = $"USER RESPONSE: {userResponse}";
+
+            var result = await CallOpenAIAsync(systemPrompt, prompt, expectJson: false);
+            return result.Content.Trim().ToUpper();
+        }
+
+        /// <summary>
+        /// Validates a single mapping proposal to determine if it should be presented to user.
+        /// Returns true if valid and should be shown.
+        /// </summary>
+        public async Task<bool> ValidateMappingProposalAsync(string sourceLayer, string proposedTarget)
+        {
+            // Basic validation rules
+            var standardA2zLayers = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "0", "Defpoints", "Expo_BoothOutline", "Expo_BoothNumber", "Expo_Building",
+                "Expo_Markings", "Expo_View2", "Expo_Column", "Expo_NES", "Expo_MaxBoothOutline", "Expo_MaxBoothNumber"
+            };
+
+            // Ensure proposed target is a valid standard layer
+            if (!standardA2zLayers.Contains(proposedTarget))
+                return false;
+
+            // Ensure source is not already a standard layer
+            if (standardA2zLayers.Contains(sourceLayer))
+                return false;
+
+            // Ensure source and target are different
+            if (sourceLayer.Equals(proposedTarget, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            return true;
         }
 
         public async Task<(string UpdatedMappings, int Tokens, int InputTokens, int OutputTokens)> UpdateMappingsAsync(string currentProposals, string userFeedback)

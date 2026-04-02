@@ -301,11 +301,25 @@ namespace BricsAI.Plugins.V19Tools
                 LoggerService.LogTransaction("PLUGIN", $"ApplyLayerMappings: starting with {mappings.Count} mapping rules.");
                 var sw = System.Diagnostics.Stopwatch.StartNew();
 
+                // Booth layers that must NEVER be unlocked
+                var boothLayers = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "Expo_BoothOutline",
+                    "Expo_BoothNumber",
+                    "Expo_MaxBoothOutline",
+                    "Expo_MaxBoothNumber"
+                };
+
                 // Step 1: Ensure all target layers exist and pre-unlock all source layers (one COM call per layer, not per entity)
+                // BUT NEVER unlock booth layers — they must remain locked throughout the entire proofing sequence
                 foreach (var kvp in mappings)
                 {
                     try { doc.Layers.Add(kvp.Value); } catch { }
-                    try { doc.Layers.Item(kvp.Key).Lock = false; } catch { }
+                    // Only unlock if it's NOT a booth layer
+                    if (!boothLayers.Contains(kvp.Key))
+                    {
+                        try { doc.Layers.Item(kvp.Key).Lock = false; } catch { }
+                    }
                 }
 
                 // Step 2: Batch remap via LISP ssget+CHPROP — one native command per mapping rule.
@@ -570,6 +584,15 @@ namespace BricsAI.Plugins.V19Tools
             if (string.IsNullOrEmpty(prefix)) return "Error: Prefix required.";
             try
             {
+                // Booth layers that must NEVER be unlocked
+                var boothLayers = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "Expo_BoothOutline",
+                    "Expo_BoothNumber",
+                    "Expo_MaxBoothOutline",
+                    "Expo_MaxBoothNumber"
+                };
+
                 var layers = doc?.Layers;
                 if (layers == null) return "Error: Could not access Layers.";
 
@@ -579,7 +602,7 @@ namespace BricsAI.Plugins.V19Tools
                     var layer = layers.Item(i);
                     string lName = layer.Name;
 
-                    if (lName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    if (lName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && !boothLayers.Contains(lName))
                     {
                         try 
                         { 
@@ -590,7 +613,7 @@ namespace BricsAI.Plugins.V19Tools
                     }
                 }
                 
-                return $"Successfully unlocked {unlockedCount} layers starting with '{prefix}'.";
+                return $"Successfully unlocked {unlockedCount} layers starting with '{prefix}' (booth layers protected).".TrimEnd(')');
             }
             catch (Exception ex)
             {

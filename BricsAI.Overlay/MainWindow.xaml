@@ -88,7 +88,7 @@
                 <StackPanel Margin="10,20,10,10">
                     <TextBlock Text="Quick Actions" Foreground="#00A8FF" FontSize="12" FontWeight="Bold" Margin="5,0,0,10" TextWrapping="Wrap"/>
                     
-                    <Button Content="🤖 Run Full AI Proofing" Command="{Binding RunProofingCommand}" IsEnabled="{Binding IsNotBusy}"
+                    <Button Content="🤖 Run Full AI Proofing" Command="{Binding RunProofingCommand}" IsEnabled="{Binding IsQuickActionsEnabled}"
                             Height="40" Margin="0,0,0,10" Background="#333" Foreground="White" BorderThickness="1" BorderBrush="#555" 
                             HorizontalContentAlignment="Left" Padding="10,0" ToolTip="Execute exact order of operations and geometry checks.">
                         <Button.Resources>
@@ -98,7 +98,7 @@
                         </Button.Resources>
                     </Button>
                     
-                    <Button Content="🧹 Clean Geometry" Command="{Binding CleanGeometryCommand}" IsEnabled="{Binding IsNotBusy}"
+                    <Button Content="🧹 Clean Geometry" Command="{Binding CleanGeometryCommand}" IsEnabled="{Binding IsQuickActionsEnabled}"
                             Height="40" Margin="0,0,0,10" Background="#333" Foreground="White" BorderThickness="1" BorderBrush="#555" 
                             HorizontalContentAlignment="Left" Padding="10,0" ToolTip="Purge, Overkill, and delete invisible/frozen layers.">
                         <Button.Resources>
@@ -108,7 +108,7 @@
                         </Button.Resources>
                     </Button>
                     
-                    <Button Content="📊 Generate Summary" Command="{Binding GenerateSummaryCommand}" IsEnabled="{Binding IsNotBusy}"
+                    <Button Content="📊 Generate Summary" Command="{Binding GenerateSummaryCommand}" IsEnabled="{Binding IsQuickActionsEnabled}"
                             Height="40" Margin="0,0,0,10" Background="#333" Foreground="White" BorderThickness="1" BorderBrush="#555" 
                             HorizontalContentAlignment="Left" Padding="10,0" ToolTip="Ask Surveyor to count objects and extract BOM without mutating variables.">
                         <Button.Resources>

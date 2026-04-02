@@ -38,10 +38,12 @@ namespace BricsAI.Overlay.ViewModels
                 _isBusy = value;
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(IsNotBusy));
+                OnPropertyChanged(nameof(IsQuickActionsEnabled));
             }
         }
 
         public bool IsNotBusy => !IsBusy;
+        public bool IsQuickActionsEnabled => !IsBusy && !_isInOneByOneMappingReview;
 
         public ICommand SendCommand { get; }
         
@@ -61,6 +63,14 @@ namespace BricsAI.Overlay.ViewModels
         private string _pendingMappingCommands = "";
         private string _originalProofingCommand = "";
         private string _lastKnownMappings = ""; // Persists across failures for context recovery
+
+        // One-by-one mapping review state
+        private bool _isInOneByOneMappingReview = false;
+        private int _currentMappingIndex = 0;
+        private List<(string Source, string Target)> _mappingQueue = new List<(string, string)>();
+        private List<(string Source, string Target)> _acceptedMappings = new List<(string, string)>();
+        private List<(string Source, string Target)> _skippedMappings = new List<(string, string)>();
+        private Dictionary<string, string> _mappingReasons = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         public MainViewModel()
         {
@@ -101,7 +111,69 @@ namespace BricsAI.Overlay.ViewModels
 
             try
             {
-                // --- INTERACTIVE MAPPING REVIEW INTERCEPTION ---
+                // --- INTERACTIVE ONE-BY-ONE MAPPING REVIEW INTERCEPTION ---
+                if (_isInOneByOneMappingReview && _currentMappingIndex < _mappingQueue.Count)
+                {
+                    IsBusy = true;
+
+                    var (sourceLayer, targetLayer) = _mappingQueue[_currentMappingIndex];
+                    string intent = await _mappingReviewAgent.ClassifySingleMappingResponseAsync(userMessage, sourceLayer, targetLayer);
+
+                    if (intent == "ACCEPT")
+                    {
+                        _acceptedMappings.Add((sourceLayer, targetLayer));
+                        BricsAI.Core.KnowledgeService.SaveLearning($"Map the layer '{sourceLayer}' to standard layer '{targetLayer}'.");
+                        Messages.Add(new ChatMessage { Role = "Assistant", Content = $"✅ Saved mapping: **{sourceLayer}** ➔ **{targetLayer}**" });
+                        _currentMappingIndex++;
+
+                        if (_currentMappingIndex < _mappingQueue.Count)
+                        {
+                            var (nextSource, nextTarget) = _mappingQueue[_currentMappingIndex];
+                            string nextReason = _mappingReasons.TryGetValue(nextSource, out var nr) ? nr : "";
+                            string nextReasonText = string.IsNullOrEmpty(nextReason) ? "" : $"\n📌 *Evidence: {nextReason}*\n";
+                            Messages.Add(new ChatMessage 
+                            { 
+                                Role = "Assistant", 
+                                Content = $"🔍 Next mapping proposal ({_currentMappingIndex + 1}/{_mappingQueue.Count}):\n\nMap **{nextSource}** to **{nextTarget}**?{nextReasonText}\n\n(Reply 'yes', 'no', or 'cancel')" 
+                            });
+                        }
+                        else
+                        {
+                            CompleteMappingReview();
+                        }
+                    }
+                    else if (intent == "SKIP")
+                    {
+                        _skippedMappings.Add((sourceLayer, targetLayer));
+                        Messages.Add(new ChatMessage { Role = "Assistant", Content = $"⏭️ Skipped mapping: **{sourceLayer}** ➔ **{targetLayer}** (will not be saved)" });
+                        _currentMappingIndex++;
+
+                        if (_currentMappingIndex < _mappingQueue.Count)
+                        {
+                            var (nextSource, nextTarget) = _mappingQueue[_currentMappingIndex];
+                            string nextReason = _mappingReasons.TryGetValue(nextSource, out var nr) ? nr : "";
+                            string nextReasonText = string.IsNullOrEmpty(nextReason) ? "" : $"\n📌 *Evidence: {nextReason}*\n";
+                            Messages.Add(new ChatMessage 
+                            { 
+                                Role = "Assistant", 
+                                Content = $"🔍 Next mapping proposal ({_currentMappingIndex + 1}/{_mappingQueue.Count}):\n\nMap **{nextSource}** to **{nextTarget}**?{nextReasonText}\n\n(Reply 'yes', 'no', or 'cancel')" 
+                            });
+                        }
+                        else
+                        {
+                            CompleteMappingReview();
+                        }
+                    }
+                    else if (intent == "ABORT")
+                    {
+                        AbortMappingReview();
+                    }
+
+                    IsBusy = false;
+                    return;
+                }
+
+                // --- INTERACTIVE MAPPING REVIEW INTERCEPTION (legacy bulk mode) ---
 
             if (_isAwaitingMappingConfirmation)
             {
@@ -240,14 +312,33 @@ namespace BricsAI.Overlay.ViewModels
             {
                 _pendingMappingCommands = _lastKnownMappings;
                 _originalProofingCommand = cleanUserMessageEarly;
-                _isAwaitingMappingConfirmation = true;
+                
+                // Initialize one-by-one mapping review for resumed session
+                _isInOneByOneMappingReview = true;
+                _currentMappingIndex = 0;
+                _mappingQueue = ExtractMappingPairsFromJson(_lastKnownMappings);
+                _acceptedMappings.Clear();
+                _skippedMappings.Clear();
 
-                string formattedRecovered = FormatMappingsForDisplay(_lastKnownMappings);
-                Messages.Add(new ChatMessage
+                if (_mappingQueue.Count > 0)
                 {
-                    Role = "Assistant",
-                    Content = $"🔁 **Resuming from previous session** — I still have the layer mappings we discussed earlier:\n\n{formattedRecovered}\n\nWould you like to proceed with these? (Reply 'yes' to confirm, 'cancel' to start fresh, or ask a question about them)"
-                });
+                    var (firstSource, firstTarget) = _mappingQueue[0];
+                    Messages.Add(new ChatMessage
+                    {
+                        Role = "Assistant",
+                        Content = $"🔁 **Resuming mapping review from previous session** ({_mappingQueue.Count} proposals)\n\n**Proposal 1 of {_mappingQueue.Count}:**\n\nMap **{firstSource}** to **{firstTarget}**?\n\n(Reply 'yes' to accept, 'no' to skip, or 'cancel' to abort all mappings)"
+                    });
+                }
+                else
+                {
+                    Messages.Add(new ChatMessage
+                    {
+                        Role = "Assistant",
+                        Content = $"🔁 **Resuming from previous session** — no mapping proposals found. Proceeding with proofing..."
+                    });
+                    _isInOneByOneMappingReview = false;
+                }
+
                 IsBusy = false;
                 return;
             }
@@ -401,71 +492,101 @@ namespace BricsAI.Overlay.ViewModels
                                        cleanUserMessage.StartsWith("learn", StringComparison.OrdinalIgnoreCase) ||
                                        cleanUserMessage.StartsWith("forget", StringComparison.OrdinalIgnoreCase);
 
-            // Heuristic check: only trigger the massive Auto-Mapper loop if the user is 
-            // actually asking to proof, map, survey, or evaluate the drawing.
-            bool isProofingOrMappingRequest = !isMemoryInstruction && (
-                                              cleanUserMessage.Contains("proof", StringComparison.OrdinalIgnoreCase) || 
-                                              cleanUserMessage.Contains("map ", StringComparison.OrdinalIgnoreCase)  ||
-                                              cleanUserMessage.Contains("remap", StringComparison.OrdinalIgnoreCase) ||
-                                              cleanUserMessage.Contains("standardize", StringComparison.OrdinalIgnoreCase));
-
-            if (unknownLayers.Any() && !skipMappingReview && isProofingOrMappingRequest)
+            // Trigger the mapper whenever unknown layers exist and the command is not a pure memory
+            // instruction. The old keyword-gating (proof/map/remap) is removed because the new
+            // 2-phase approach is fast (~36s) and users expect proposals for any command that
+            // surfaces unknown layers (including Generate Summary).
+            if (unknownLayers.Any() && !skipMappingReview && !isMemoryInstruction)
             {
-                var mapperMsg = new ChatMessage { Role = "Assistant", Content = $"✨ Mapper Agent: Intercepting {unknownLayers.Count} unknown vendor layers. Polling semantics...", IsThinking = true };
+                var mapperMsg = new ChatMessage { Role = "Assistant", Content = $"✨ Mapper Agent: Intercepting {unknownLayers.Count} unknown vendor layers...", IsThinking = true };
                 Messages.Add(mapperMsg);
-
                 IProgress<string> mapProgress = new Progress<string>(update => { mapperMsg.Content += $"\n{update}"; });
 
-                var pendingToolCalls = new List<string>();
+                var allMappings = new List<BricsAI.Overlay.Services.Agents.MappingResult>();
 
-                foreach (var unknownLayer in unknownLayers)
+                // === PHASE 1: Classify by layer name alone (1 LLM call, no COM) ===
+                mapProgress.Report($"\n🏷️ Phase 1: Classifying {unknownLayers.Count} layers by name...");
+                var phase1 = await _mapper.ClassifyByNameAsync(unknownLayers);
+                totalTokens += phase1.Tokens;
+                totalInputTokens += phase1.InputTokens;
+                totalOutputTokens += phase1.OutputTokens;
+
+                allMappings.AddRange(phase1.Confident);
+                mapProgress.Report($"✅ {phase1.Confident.Count} layers classified by name. {phase1.Uncertain.Count} need geometry evidence.");
+
+                // === PHASE 2: Poll geometry for uncertain layers, then batch classify (1 more LLM call) ===
+                if (phase1.Uncertain.Any())
                 {
-                    mapProgress.Report($"\n🔎 Polling semantics for '{unknownLayer}'...");
-                    string safeLayerName = unknownLayer.Replace("\"", "\\\"").Replace("\\", "\\\\");
-                    string footprintPlan = $@"{{ ""tool_calls"": [{{ ""command_name"": ""POLL_SEMANTICS"", ""lisp_code"": ""NET:POLL_LAYER_SEMANTICS:{safeLayerName}"" }}] }}";
-                    
-                    string footprint = await Task.Run(() => _comClient.ExecuteActionAsync(footprintPlan, mapProgress));
-                    
-                    if (!footprint.Contains("Error") && footprint.Length > 10)
+                    mapProgress.Report($"\n🔎 Phase 2: Polling geometry for {phase1.Uncertain.Count} uncertain layers...");
+                    var footprints = new List<(string LayerName, string Footprint)>();
+
+                    foreach (var unknownLayer in phase1.Uncertain)
                     {
-                        mapProgress.Report($"🧠 Thinking: Deducing A2Z Mapping...");
-                        var mapperResult = await Task.Run(() => _mapper.DeduceLayerMappingAsync(unknownLayer, footprint));
-                        totalTokens += mapperResult.Tokens;
-                        totalInputTokens += mapperResult.InputTokens;
-                        totalOutputTokens += mapperResult.OutputTokens;
-                        
-                        try 
-                        {
-                           var doc = System.Text.Json.JsonDocument.Parse(mapperResult.ActionPlan);
-                           var calls = doc.RootElement.GetProperty("tool_calls");
-                           foreach (var call in calls.EnumerateArray())
-                           {
-                               pendingToolCalls.Add(call.GetRawText());
-                           }
-                        } catch { }
+                        mapProgress.Report($"\n   Polling '{unknownLayer}'...");
+                        string safeLayerName = unknownLayer.Replace("\"", "\\\"").Replace("\\", "\\\\");
+                        string footprintPlan = $@"{{ ""tool_calls"": [{{ ""command_name"": ""POLL_SEMANTICS"", ""lisp_code"": ""NET:POLL_LAYER_SEMANTICS:{safeLayerName}"" }}] }}";
+                        string footprint = await Task.Run(() => _comClient.ExecuteActionAsync(footprintPlan, mapProgress));
+
+                        if (!footprint.Contains("Error") && footprint.Length > 10)
+                            footprints.Add((unknownLayer, footprint));
+                        else
+                            mapProgress.Report($"   ⚠️ Empty or unreadable — skipping.");
                     }
-                    else
+
+                    if (footprints.Any())
                     {
-                        mapProgress.Report($"⚠️ Layer empty or unreadable. Skipping.");
+                        mapProgress.Report($"\n🧠 Batch-classifying {footprints.Count} layers by geometry (1 LLM call)...");
+                        var phase2 = await _mapper.BatchDeduceByGeometryAsync(footprints);
+                        totalTokens += phase2.Tokens;
+                        totalInputTokens += phase2.InputTokens;
+                        totalOutputTokens += phase2.OutputTokens;
+                        allMappings.AddRange(phase2.Mappings);
+                        mapProgress.Report($"✅ {phase2.Mappings.Count} additional layers classified by geometry.");
                     }
                 }
-                
+
                 mapperMsg.IsThinking = false;
+
+                // Build the pending tool calls JSON from all results
+                var pendingToolCalls = allMappings
+                    .Select(m => $@"{{ ""command_name"": ""Semantic Mapping"", ""lisp_code"": ""{m.LispCode}"" }}")
+                    .ToList();
+
+                // Store reasons keyed by source layer
+                foreach (var m in allMappings)
+                    if (!string.IsNullOrEmpty(m.Reason))
+                        _mappingReasons[m.SourceLayer] = m.Reason;
 
                 if (pendingToolCalls.Any())
                 {
                     _pendingMappingCommands = "{ \"tool_calls\": [\n" + string.Join(",\n", pendingToolCalls) + "\n] }";
                     _lastKnownMappings = _pendingMappingCommands; // Persist for context recovery on failure
                     _originalProofingCommand = userMessage;
-                    _isAwaitingMappingConfirmation = true;
-                    
-                    string formattedProps = FormatMappingsForDisplay(_pendingMappingCommands);
-                    Messages.Add(new ChatMessage { Role = "Assistant", Content = $"🛑 **Human Review Required**\nHere are the proposed layer mappings:\n\n{formattedProps}\n\nDoes this look correct? (Reply 'yes' to proceed, 'cancel' to abort, or provide natural language corrections)" });
-                    
-                    stopwatch.Stop();
-                    double surveySeconds = Math.Round(stopwatch.Elapsed.TotalSeconds, 1);
-                    Messages.Add(new ChatMessage { Role = "Assistant", Content = $"📊 Performance: {totalTokens} API tokens consumed ({totalInputTokens} Input, {totalOutputTokens} Output) mapping {unknownLayers.Count} layers. Surveyor completed in {surveySeconds} seconds." });
 
+                    // Initialize one-by-one mapping review
+                    _isInOneByOneMappingReview = true;
+                    _currentMappingIndex = 0;
+                    _mappingQueue = ExtractMappingPairsFromJson(_pendingMappingCommands);
+                    _acceptedMappings.Clear();
+                    _skippedMappings.Clear();
+
+                    if (_mappingQueue.Count > 0)
+                    {
+                        stopwatch.Stop();
+                        double surveySeconds = Math.Round(stopwatch.Elapsed.TotalSeconds, 1);
+                        Messages.Add(new ChatMessage { Role = "Assistant", Content = $"📊 Performance: {totalTokens} API tokens consumed ({totalInputTokens} Input, {totalOutputTokens} Output) mapping {unknownLayers.Count} layers. Surveyor completed in {surveySeconds} seconds." });
+
+                        var (firstSource, firstTarget) = _mappingQueue[0];
+                        string firstReason = _mappingReasons.TryGetValue(firstSource, out var fr) ? fr : "";
+                        string firstReasonText = string.IsNullOrEmpty(firstReason) ? "" : $"\n📌 *Evidence: {firstReason}*\n";
+                        Messages.Add(new ChatMessage 
+                        { 
+                            Role = "Assistant", 
+                            Content = $"🛑 **Human Review Required** — Mapping proposals ahead\n\nI've identified {_mappingQueue.Count} unknown layer(s) that need mapping.\n\n**Proposal 1 of {_mappingQueue.Count}:**\n\nMap **{firstSource}** to **{firstTarget}**?{firstReasonText}\n\n(Reply 'yes' to accept, 'no' to skip, or 'cancel' to abort all mappings)" 
+                        });
+                    }
+
+                    OnPropertyChanged(nameof(IsQuickActionsEnabled));
                     IsBusy = false; // Unlock UI to allow user feedback
                     return; // Halt execution and wait for human response
                 }
@@ -609,6 +730,123 @@ namespace BricsAI.Overlay.ViewModels
         protected void OnPropertyChanged([CallerMemberName] string? name = null)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+        }
+
+        private void CompleteMappingReview()
+        {
+            _isInOneByOneMappingReview = false;
+            _currentMappingIndex = 0;
+            _mappingQueue.Clear();
+            _mappingReasons.Clear();
+            OnPropertyChanged(nameof(IsQuickActionsEnabled));
+            
+            int acceptedCount = _acceptedMappings.Count;
+            int skippedCount = _skippedMappings.Count;
+
+            _acceptedMappings.Clear();
+            _skippedMappings.Clear();
+
+            Messages.Add(new ChatMessage 
+            { 
+                Role = "Assistant", 
+                Content = $"✨ Mapping review complete!\n\n📊 Summary:\n• **Accepted:** {acceptedCount} mappings\n• **Skipped:** {skippedCount} mappings\n\n⏭️ Proceeding with proofing..." 
+            });
+
+            _isAwaitingMappingConfirmation = false;
+            _pendingMappingCommands = "";
+            IsBusy = false;
+
+            // Resume original proofing command, but skip the mapping review sequence to prevent infinite loop
+            _ = ExecuteQuickAction(_originalProofingCommand + " _skipMappingReviewSequence_");
+        }
+
+        private void AbortMappingReview()
+        {
+            _isInOneByOneMappingReview = false;
+            _currentMappingIndex = 0;
+            _mappingQueue.Clear();
+            _mappingReasons.Clear();
+            OnPropertyChanged(nameof(IsQuickActionsEnabled));
+            _acceptedMappings.Clear();
+            _skippedMappings.Clear();
+            _pendingMappingCommands = "";
+            _originalProofingCommand = "";
+            _lastKnownMappings = "";
+
+            Messages.Add(new ChatMessage 
+            { 
+                Role = "Assistant", 
+                Content = "🛑 **Mapping review cancelled by user.** All proposed mappings were discarded. Dashboard unlocked. Your next proofing request will start a fresh scan." 
+            });
+
+            IsBusy = false;
+        }
+
+        private List<(string Source, string Target)> ExtractMappingPairsFromJson(string jsonMappings)
+        {
+            var pairs = new List<(string, string)>();
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(jsonMappings);
+                var calls = doc.RootElement.GetProperty("tool_calls");
+                foreach (var call in calls.EnumerateArray())
+                {
+                    string lispCode = call.GetProperty("lisp_code").GetString() ?? "";
+                    if (lispCode.StartsWith("NET:LEARN_LAYER_MAPPING:"))
+                    {
+                        var parts = lispCode.Substring("NET:LEARN_LAYER_MAPPING:".Length).Split(':');
+                        if (parts.Length == 2)
+                        {
+                            pairs.Add((parts[0].Trim(), parts[1].Trim()));
+                        }
+                    }
+                }
+            }
+            catch { }
+            return pairs;
+        }
+
+        private string BuildFootprintReason(string footprintJson)
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(footprintJson);
+                var root = doc.RootElement;
+                var parts = new List<string>();
+
+                if (root.TryGetProperty("TotalCount", out var tc))
+                    parts.Add($"{tc.GetInt32()} entities total");
+
+                if (root.TryGetProperty("EntityTypes", out var et))
+                {
+                    foreach (var prop in et.EnumerateObject())
+                    {
+                        // Strip AcDb prefix for readability: AcDbLine → Line
+                        string shortName = prop.Name.Replace("AcDb", "").Replace("Acad", "");
+                        parts.Add($"{prop.Value.GetInt32()} {shortName}");
+                    }
+                }
+
+                if (root.TryGetProperty("BlockNames", out var bn) && bn.GetArrayLength() > 0)
+                {
+                    var blocks = new List<string>();
+                    foreach (var b in bn.EnumerateArray()) blocks.Add(b.GetString() ?? "");
+                    parts.Add($"blocks: {string.Join(", ", blocks.Take(3))}");
+                }
+
+                if (root.TryGetProperty("TextSample", out var ts) && ts.GetArrayLength() > 0)
+                {
+                    var texts = new List<string>();
+                    foreach (var t in ts.EnumerateArray()) texts.Add($"'{t.GetString()}'");
+                    parts.Add($"text: {string.Join(", ", texts.Take(3))}");
+                }
+
+                return string.Join(" | ", parts);
+            }
+            catch
+            {
+                return "";
+            }
         }
 
         private string FormatMappingsForDisplay(string jsonMappings)
